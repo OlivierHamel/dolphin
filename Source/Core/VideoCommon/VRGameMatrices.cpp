@@ -19,6 +19,7 @@
 #include "VideoCommon/GeometryShaderManager.h"
 #include "VideoCommon/VR.h"
 #include "VideoCommon/VideoConfig.h"
+#include "VideoCommon/XFMemory.h"
 
 #include "InputCommon/ControllerInterface/Sixense/SixenseHack.h"
 
@@ -714,7 +715,7 @@ bool CalculateTrackingSpaceToViewSpaceMatrix(int kind, Matrix44& look_matrix)
       HudHeight = 2.0f * tanf(DEGREES_TO_RADIANS(vfov / 2.0f)) * HudDistance *
                   (AimDistance + CameraForward) / AimDistance;
     }
-    if (kind = 0 | bShowAim)
+    if (kind == 0 || bShowAim)
       HudThickness = HudWidth;
 
     float scale[3];  // width, height, and depth of box in game units divided by 2D width, height,

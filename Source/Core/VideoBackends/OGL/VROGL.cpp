@@ -9,16 +9,18 @@
 #endif
 
 #include "Common/GL/GLUtil.h"
+#include "Common/MsgHandler.h"
+#include "Common/Logging/Log.h"
 #include "VideoBackends/OGL/FramebufferManager.h"
 #include "VideoBackends/OGL/PostProcessing.h"
 #include "VideoBackends/OGL/Render.h"
 #include "VideoBackends/OGL/TextureConverter.h"
 #include "VideoBackends/OGL/VROGL.h"
 #include "VideoCommon/RenderBase.h"
-#include "VideoCommon/VideoConfig.h"
 #include "VideoCommon/VR.h"
 #include "VideoCommon/VROculus.h"
 #include "VideoCommon/VROpenVR.h"
+#include "VideoCommon/VideoConfig.h"
 
 // Oculus Rift
 #if defined(OVR_MAJOR_VERSION) && OVR_PRODUCT_VERSION == 0
@@ -47,7 +49,7 @@ struct TextureBuffer
   GLuint fboId;
   ovrSizei texSize;
 
-  TextureBuffer(ovrHmd hmd, bool rendertarget, bool displayableOnHmd, OVR::Sizei size,
+  TextureBuffer(ovrHmd hmd0, bool rendertarget, bool displayableOnHmd, OVR::Sizei size,
                 int mipLevels, unsigned char* data, int sampleCount)
   {
 // OVR_ASSERT(sampleCount <= 1); // The code doesn't currently handle MSAA textures.
@@ -62,7 +64,7 @@ struct TextureBuffer
     if (displayableOnHmd)
     {
       // This texture isn't necessarily going to be a rendertarget, but it usually is.
-      // OVR_ASSERT(hmd); // No HMD? A little odd.
+      // OVR_ASSERT(hmd0); // No HMD? A little odd.
       // OVR_ASSERT(sampleCount == 1); // ovrHmd_CreateSwapTextureSetD3D11 doesn't support MSAA.
 
       int length = 0;
@@ -80,8 +82,8 @@ struct TextureBuffer
       desc.BindFlags = 0;
       desc.StaticImage = ovrFalse;
 
-      res = ovr_CreateTextureSwapChainGL(hmd, &desc, &TextureChain);
-      ovr_GetTextureSwapChainLength(hmd, TextureChain, &length);
+      res = ovr_CreateTextureSwapChainGL(hmd0, &desc, &TextureChain);
+      ovr_GetTextureSwapChainLength(hmd0, TextureChain, &length);
       if (!OVR_SUCCESS(res))
       {
         ovrErrorInfo e;
@@ -92,17 +94,17 @@ struct TextureBuffer
         return;
       }
 #elif OVR_MAJOR_VERSION >= 7
-      ovr_CreateSwapTextureSetGL(hmd, GL_SRGB8_ALPHA8, size.w, size.h, &TextureSet);
+      ovr_CreateSwapTextureSetGL(hmd0, GL_SRGB8_ALPHA8, size.w, size.h, &TextureSet);
       length = TextureSet->TextureCount;
 #else
-      ovrHmd_CreateSwapTextureSetGL(hmd, GL_RGBA, size.w, size.h, &TextureSet);
+      ovrHmd_CreateSwapTextureSetGL(hmd0, GL_RGBA, size.w, size.h, &TextureSet);
       length = TextureSet->TextureCount;
 #endif
       for (int i = 0; i < length; ++i)
       {
 #if OVR_PRODUCT_VERSION >= 1
         GLuint chainTexId;
-        ovr_GetTextureSwapChainBufferGL(hmd, TextureChain, i, &chainTexId);
+        ovr_GetTextureSwapChainBufferGL(hmd0, TextureChain, i, &chainTexId);
         glBindTexture(GL_TEXTURE_2D, chainTexId);
 #else
         ovrGLTexture* tex = (ovrGLTexture*)&TextureSet->Textures[i];
@@ -436,146 +438,6 @@ bool CreateAllShaders()
 //-----------------------------------------------------------------------------
 // Purpose:
 //-----------------------------------------------------------------------------
-void SetupDistortion()
-{
-  if (!m_pHMD)
-    return;
-
-  GLushort m_iLensGridSegmentCountH = 43;
-  GLushort m_iLensGridSegmentCountV = 43;
-
-  float w = (float)(1.0 / float(m_iLensGridSegmentCountH - 1));
-  float h = (float)(1.0 / float(m_iLensGridSegmentCountV - 1));
-
-  float u, v = 0;
-
-  std::vector<VertexDataLens> vVerts(0);
-  VertexDataLens vert;
-
-  // left eye distortion verts
-  float Xoffset = -1;
-  for (int y = 0; y < m_iLensGridSegmentCountV; y++)
-  {
-    for (int x = 0; x < m_iLensGridSegmentCountH; x++)
-    {
-      u = x * w;
-      v = 1 - y * h;
-      vert.position = Vector2(Xoffset + u, -1 + 2 * y * h);
-
-      vr::DistortionCoordinates_t dc0 = m_pHMD->ComputeDistortion(vr::Eye_Left, u, v);
-
-      vert.texCoordRed = Vector2(dc0.rfRed[0], 1 - dc0.rfRed[1]);
-      vert.texCoordGreen = Vector2(dc0.rfGreen[0], 1 - dc0.rfGreen[1]);
-      vert.texCoordBlue = Vector2(dc0.rfBlue[0], 1 - dc0.rfBlue[1]);
-
-      vVerts.push_back(vert);
-    }
-  }
-
-  // right eye distortion verts
-  Xoffset = 0;
-  for (int y = 0; y < m_iLensGridSegmentCountV; y++)
-  {
-    for (int x = 0; x < m_iLensGridSegmentCountH; x++)
-    {
-      u = x * w;
-      v = 1 - y * h;
-      vert.position = Vector2(Xoffset + u, -1 + 2 * y * h);
-
-      vr::DistortionCoordinates_t dc0 = m_pHMD->ComputeDistortion(vr::Eye_Right, u, v);
-
-      vert.texCoordRed = Vector2(dc0.rfRed[0], 1 - dc0.rfRed[1]);
-      vert.texCoordGreen = Vector2(dc0.rfGreen[0], 1 - dc0.rfGreen[1]);
-      vert.texCoordBlue = Vector2(dc0.rfBlue[0], 1 - dc0.rfBlue[1]);
-
-      vVerts.push_back(vert);
-    }
-  }
-
-  std::vector<GLushort> vIndices;
-  GLushort a, b, c, d;
-
-  GLushort offset = 0;
-  for (GLushort y = 0; y < m_iLensGridSegmentCountV - 1; y++)
-  {
-    for (GLushort x = 0; x < m_iLensGridSegmentCountH - 1; x++)
-    {
-      a = m_iLensGridSegmentCountH * y + x + offset;
-      b = m_iLensGridSegmentCountH * y + x + 1 + offset;
-      c = (y + 1) * m_iLensGridSegmentCountH + x + 1 + offset;
-      d = (y + 1) * m_iLensGridSegmentCountH + x + offset;
-      vIndices.push_back(a);
-      vIndices.push_back(b);
-      vIndices.push_back(c);
-
-      vIndices.push_back(a);
-      vIndices.push_back(c);
-      vIndices.push_back(d);
-    }
-  }
-
-  offset = (m_iLensGridSegmentCountH) * (m_iLensGridSegmentCountV);
-  for (GLushort y = 0; y < m_iLensGridSegmentCountV - 1; y++)
-  {
-    for (GLushort x = 0; x < m_iLensGridSegmentCountH - 1; x++)
-    {
-      a = m_iLensGridSegmentCountH * y + x + offset;
-      b = m_iLensGridSegmentCountH * y + x + 1 + offset;
-      c = (y + 1) * m_iLensGridSegmentCountH + x + 1 + offset;
-      d = (y + 1) * m_iLensGridSegmentCountH + x + offset;
-      vIndices.push_back(a);
-      vIndices.push_back(b);
-      vIndices.push_back(c);
-
-      vIndices.push_back(a);
-      vIndices.push_back(c);
-      vIndices.push_back(d);
-    }
-  }
-  m_uiIndexSize = (unsigned int)vIndices.size();
-
-  glGenVertexArrays(1, &m_unLensVAO);
-  glBindVertexArray(m_unLensVAO);
-
-  glGenBuffers(1, &m_glIDVertBuffer);
-  glBindBuffer(GL_ARRAY_BUFFER, m_glIDVertBuffer);
-  glBufferData(GL_ARRAY_BUFFER, vVerts.size() * sizeof(VertexDataLens), &vVerts[0], GL_STATIC_DRAW);
-
-  glGenBuffers(1, &m_glIDIndexBuffer);
-  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_glIDIndexBuffer);
-  glBufferData(GL_ELEMENT_ARRAY_BUFFER, vIndices.size() * sizeof(GLushort), &vIndices[0],
-               GL_STATIC_DRAW);
-
-  glEnableVertexAttribArray(0);
-  glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(VertexDataLens),
-                        (void*)offsetof(VertexDataLens, position));
-
-  glEnableVertexAttribArray(1);
-  glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(VertexDataLens),
-                        (void*)offsetof(VertexDataLens, texCoordRed));
-
-  glEnableVertexAttribArray(2);
-  glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(VertexDataLens),
-                        (void*)offsetof(VertexDataLens, texCoordGreen));
-
-  glEnableVertexAttribArray(3);
-  glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, sizeof(VertexDataLens),
-                        (void*)offsetof(VertexDataLens, texCoordBlue));
-
-  glBindVertexArray(0);
-
-  glDisableVertexAttribArray(0);
-  glDisableVertexAttribArray(1);
-  glDisableVertexAttribArray(2);
-  glDisableVertexAttribArray(3);
-
-  glBindBuffer(GL_ARRAY_BUFFER, 0);
-  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-}
-
-//-----------------------------------------------------------------------------
-// Purpose:
-//-----------------------------------------------------------------------------
 bool BInitGL()
 {
   if (!CreateAllShaders())
@@ -585,7 +447,7 @@ bool BInitGL()
   // SetupScene();
   // SetupCameras();
   // SetupStereoRenderTargets();
-  SetupDistortion();
+  // SetupDistortion();
 
   // SetupRenderModels();
   return true;
@@ -597,7 +459,7 @@ bool BInitGL()
 void RenderDistortion()
 {
   glDisable(GL_DEPTH_TEST);
-  glViewport(0, 0, Renderer::GetBackbufferWidth(), Renderer::GetBackbufferHeight());
+  glViewport(0, 0, g_renderer->GetBackbufferWidth(), g_renderer->GetBackbufferHeight());
 
   glBindVertexArray(m_unLensVAO);
   glUseProgram(m_unLensProgramID);
@@ -702,10 +564,11 @@ void VR_ConfigureHMD()
 #if defined(OVR_MAJOR_VERSION) && (OVR_PRODUCT_VERSION >= 1 || OVR_MAJOR_VERSION >= 6)
 void RecreateMirrorTextureIfNeeded()
 {
-  int w = Renderer::GetBackbufferWidth();
-  int h = Renderer::GetBackbufferHeight();
-  if (w != mirror_width || h != mirror_height ||
-      ((mirrorTexture == nullptr) != g_ActiveConfig.bNoMirrorToWindow))
+  int w = g_renderer->GetBackbufferWidth();
+  int h = g_renderer->GetBackbufferHeight();
+  bool bNoMirrorToWindow = g_ActiveConfig.iMirrorPlayer == VR_PLAYER_NONE ||
+                           g_ActiveConfig.iMirrorStyle == VR_MIRROR_DISABLED;
+  if (w != mirror_width || h != mirror_height || ((mirrorTexture == nullptr) != bNoMirrorToWindow))
   {
     if (mirrorTexture)
     {
@@ -717,7 +580,7 @@ void RecreateMirrorTextureIfNeeded()
 #endif
       mirrorTexture = nullptr;
     }
-    if (!g_ActiveConfig.bNoMirrorToWindow)
+    if (!bNoMirrorToWindow)
     {
       // Create mirror texture and an FBO used to copy mirror texture to back buffer
       mirror_width = w;
@@ -782,9 +645,8 @@ void VR_StartFramebuffer(int target_width, int target_height)
 
     RecreateMirrorTextureIfNeeded();
   }
-  else
 #endif
-      if (g_has_vr920)
+  if (g_has_vr920)
   {
 #ifdef _WIN32
     VR920_StartStereo3D();
@@ -792,7 +654,11 @@ void VR_StartFramebuffer(int target_width, int target_height)
   }
 #if (defined(OVR_MAJOR_VERSION) && OVR_PRODUCT_VERSION == 0 && OVR_MAJOR_VERSION <= 5) ||          \
     defined(HAVE_OPENVR)
-  else if (g_has_rift || g_has_openvr)
+  if (
+#if defined(OVR_MAJOR_VERSION) && OVR_PRODUCT_VERSION == 0 && OVR_MAJOR_VERSION <= 5
+    g_has_rift ||
+#endif
+    g_has_openvr)
   {
     // create the eye textures
     glGenTextures(2, FramebufferManager::m_frontBuffer);
@@ -931,10 +797,10 @@ void VR_BeginFrame()
 #endif
 }
 
-void VR_RenderToEyebuffer(int eye)
+void VR_RenderToEyebuffer(int eye, int hmd_number)
 {
 #if defined(OVR_MAJOR_VERSION) && (OVR_PRODUCT_VERSION >= 1 || OVR_MAJOR_VERSION >= 6)
-  if (g_has_rift)
+  if (g_has_rift && (hmd_number == 1 || !g_has_openvr))
   {
     eyeRenderTexture[eye]->UnsetRenderSurface();
     // Switch to eye render target
@@ -946,50 +812,20 @@ void VR_RenderToEyebuffer(int eye)
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FramebufferManager::m_eyeFramebuffer[eye]);
 #endif
 #if defined(HAVE_OPENVR)
-  if (g_has_openvr)
+  if (g_has_openvr && (hmd_number == 0 || !g_has_rift))
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FramebufferManager::m_eyeFramebuffer[eye]);
 #endif
 }
 
 void VR_PresentHMDFrame()
 {
-#ifdef HAVE_OPENVR
-  if (m_pCompositor)
-  {
-    vr::Texture_t leftEyeTexture = {(void*)(size_t)m_left_texture, vr::API_OpenGL,
-                                    vr::ColorSpace_Gamma};
-    vr::VRCompositor()->Submit(vr::Eye_Left, &leftEyeTexture);
-    vr::Texture_t rightEyeTexture = {(void*)(size_t)m_right_texture, vr::API_OpenGL,
-                                     vr::ColorSpace_Gamma};
-    vr::VRCompositor()->Submit(vr::Eye_Right, &rightEyeTexture);
-
-    m_pCompositor->WaitGetPoses(m_rTrackedDevicePose, vr::k_unMaxTrackedDeviceCount, nullptr, 0);
-    g_older_tracking_time = g_old_tracking_time;
-    g_old_tracking_time = g_last_tracking_time;
-    g_last_tracking_time = Common::Timer::GetTimeMs() / 1000.0;
-
-    if (!g_ActiveConfig.bNoMirrorToWindow)
-    {
-      glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-      // Blit mirror texture to back buffer
-      glBindFramebuffer(GL_READ_FRAMEBUFFER, FramebufferManager::m_eyeFramebuffer[0]);
-      glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-      GLint w = Renderer::GetTargetWidth();
-      GLint h = Renderer::GetTargetHeight();
-      glBlitFramebuffer(0, 0, w, h, 0, 0, Renderer::GetBackbufferWidth(),
-                        Renderer::GetBackbufferHeight(), GL_COLOR_BUFFER_BIT, GL_NEAREST);
-      glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-      GLInterface->Swap();
-    }
-  }
-#endif
 #ifdef OVR_MAJOR_VERSION
   if (g_has_rift)
   {
-// ovrHmd_EndEyeRender(hmd, ovrEye_Left, g_left_eye_pose,
-// &FramebufferManager::m_eye_texture[ovrEye_Left].Texture);
-// ovrHmd_EndEyeRender(hmd, ovrEye_Right, g_right_eye_pose,
-// &FramebufferManager::m_eye_texture[ovrEye_Right].Texture);
+    // ovrHmd_EndEyeRender(hmd, ovrEye_Left, g_left_eye_pose,
+    // &FramebufferManager::m_eye_texture[ovrEye_Left].Texture);
+    // ovrHmd_EndEyeRender(hmd, ovrEye_Right, g_right_eye_pose,
+    // &FramebufferManager::m_eye_texture[ovrEye_Right].Texture);
 #if OVR_PRODUCT_VERSION == 0 && OVR_MAJOR_VERSION <= 5
     // Let OVR do distortion rendering, Present and flush/sync.
     ovrHmd_EndFrame(hmd, g_eye_poses, &g_eye_texture[0].Texture);
@@ -1012,25 +848,97 @@ void VR_PresentHMDFrame()
       ld.RenderPose[eye] = g_eye_poses[eye];
     }
     ovrLayerHeader* layers = &ld.Header;
-    ovrResult result = ovrHmd_SubmitFrame(hmd, 0, nullptr, &layers, 1);
+    // ovrResult result = 
+	ovrHmd_SubmitFrame(hmd, 0, nullptr, &layers, 1);
 
-    if (!g_ActiveConfig.bNoMirrorToWindow)
+    if (g_ActiveConfig.iMirrorPlayer != VR_PLAYER_NONE &&
+      g_ActiveConfig.iMirrorStyle != VR_MIRROR_DISABLED)
     {
-      // Blit mirror texture to back buffer
-      glBindFramebuffer(GL_READ_FRAMEBUFFER, mirrorFBO);
-      glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+      if (g_ActiveConfig.iMirrorStyle != VR_MIRROR_WARPED)
+      {
+        GLint w = g_renderer->GetTargetWidth();
+        GLint h = g_renderer->GetTargetHeight();
+        GLint bbw = g_renderer->GetBackbufferWidth();
+        GLint bbh = g_renderer->GetBackbufferHeight();
+        // warped or both eyes
+        int eye = 0;
+        if (g_ActiveConfig.iMirrorStyle >= VR_MIRROR_BOTH)
+          bbw /= 2;
+        else
+          eye = g_ActiveConfig.iMirrorStyle - VR_MIRROR_LEFT;
+
+        // Blit mirror texture to back buffer
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, FramebufferManager::GetEFBFramebuffer(eye));
+        glBlitFramebuffer(0, 0, w, h, 0, 0, bbw, bbh, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        if (g_ActiveConfig.iMirrorStyle >= VR_MIRROR_BOTH)
+        {
+          glBindFramebuffer(GL_READ_FRAMEBUFFER, FramebufferManager::GetEFBFramebuffer(1));
+          glBlitFramebuffer(0, 0, w, h, bbw, 0, bbw * 2, bbh, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        }
+      }
+      else
+      {
+        // Blit mirror texture to back buffer
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, mirrorFBO);
 #if OVR_PRODUCT_VERSION >= 1
-      GLint w = mirror_width;
-      GLint h = mirror_height;
+        GLint w = mirror_width;
+        GLint h = mirror_height;
 #else
-      GLint w = mirrorTexture->OGL.Header.TextureSize.w;
-      GLint h = mirrorTexture->OGL.Header.TextureSize.h;
+        GLint w = mirrorTexture->OGL.Header.TextureSize.w;
+        GLint h = mirrorTexture->OGL.Header.TextureSize.h;
 #endif
-      glBlitFramebuffer(0, h, w, 0, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        glBlitFramebuffer(0, h, w, 0, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+      }
       glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
       GLInterface->Swap();
     }
 #endif
+  }
+#endif
+#ifdef HAVE_OPENVR
+  if (m_pCompositor)
+  {
+    vr::Texture_t leftEyeTexture = {(void*)(size_t)m_left_texture, OPENVR_OpenGL,
+                                    vr::ColorSpace_Gamma};
+    vr::VRCompositor()->Submit(vr::Eye_Left, &leftEyeTexture);
+    vr::Texture_t rightEyeTexture = {(void*)(size_t)m_right_texture, OPENVR_OpenGL,
+                                     vr::ColorSpace_Gamma};
+    vr::VRCompositor()->Submit(vr::Eye_Right, &rightEyeTexture);
+
+    m_pCompositor->WaitGetPoses(m_rTrackedDevicePose, vr::k_unMaxTrackedDeviceCount, nullptr, 0);
+    g_older_tracking_time = g_old_tracking_time;
+    g_old_tracking_time = g_last_tracking_time;
+    g_last_tracking_time = Common::Timer::GetTimeMs() / 1000.0;
+
+    if (g_ActiveConfig.iMirrorPlayer != VR_PLAYER_NONE &&
+        g_ActiveConfig.iMirrorStyle != VR_MIRROR_DISABLED)
+    {
+      glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+      GLint w = g_renderer->GetTargetWidth();
+      GLint h = g_renderer->GetTargetHeight();
+      GLint bbw = g_renderer->GetBackbufferWidth();
+      GLint bbh = g_renderer->GetBackbufferHeight();
+      // warped or both eyes
+      int eye = 0;
+      if (g_ActiveConfig.iMirrorStyle >= VR_MIRROR_WARPED)
+        bbw /= 2;
+      else
+        eye = g_ActiveConfig.iMirrorStyle - VR_MIRROR_LEFT;
+      // Blit mirror texture to back buffer
+      glBindFramebuffer(GL_READ_FRAMEBUFFER, FramebufferManager::m_eyeFramebuffer[eye]);
+      glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+      glBlitFramebuffer(0, 0, w, h, 0, 0, bbw, bbh, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+      if (g_ActiveConfig.iMirrorStyle >= VR_MIRROR_WARPED)
+      {
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, FramebufferManager::m_eyeFramebuffer[1]);
+        glBlitFramebuffer(0, 0, w, h, bbw, 0, bbw, bbh, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+      }
+      glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+      if (!g_has_rift)
+        GLInterface->Swap();
+    }
   }
 #endif
 }
@@ -1041,8 +949,8 @@ void VR_DrawTimewarpFrame()
 #if 0 && defined(HAVE_OPENVR)
 	if (g_has_openvr && m_pCompositor)
 	{
-		m_pCompositor->Submit(vr::Eye_Left, vr::API_OpenGL, (void*)m_left_texture, nullptr);
-		m_pCompositor->Submit(vr::Eye_Right, vr::API_OpenGL, (void*)m_right_texture, nullptr);
+		m_pCompositor->Submit(vr::Eye_Left, OPENVR_OpenGL, (void*)m_left_texture, nullptr);
+		m_pCompositor->Submit(vr::Eye_Right, OPENVR_OpenGL, (void*)m_right_texture, nullptr);
 		m_pCompositor->WaitGetPoses(m_rTrackedDevicePose, vr::k_unMaxTrackedDeviceCount, nullptr, 0);
 		uint32_t unSize = m_pCompositor->GetLastError(NULL, 0);
 		if (unSize > 1)
@@ -1091,7 +999,8 @@ void VR_DrawTimewarpFrame()
       ld.RenderPose[eye] = g_eye_poses[eye];
     }
     ovrLayerHeader* layers = &ld.Header;
-    ovrResult result = ovrHmd_SubmitFrame(hmd, 0, nullptr, &layers, 1);
+    // ovrResult result = 
+	ovrHmd_SubmitFrame(hmd, 0, nullptr, &layers, 1);
 #endif
   }
 #endif

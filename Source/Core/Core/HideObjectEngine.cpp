@@ -5,6 +5,7 @@
 // HideObjectEngine
 // Supports the removal of objects/effects from the rendering loop
 
+#include "Common/StringUtil.h"
 #include "Core/HideObjectEngine.h"
 #include "Core/ConfigManager.h"
 #include "Core/Core.h"
@@ -70,8 +71,7 @@ void LoadHideObjectSection(const std::string& section, std::vector<HideObject>& 
           line[loc] = ':';
         }
 
-        std::vector<std::string> items;
-        SplitString(line, ':', items);
+        std::vector<std::string> items = SplitString(line, ':');
 
         if (items.size() >= 3)
         {

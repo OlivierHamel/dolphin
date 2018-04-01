@@ -5,7 +5,6 @@
 #include "Common/Arm64Emitter.h"
 #include "Common/CommonTypes.h"
 
-#include "Core/ConfigManager.h"
 #include "Core/Core.h"
 #include "Core/CoreTiming.h"
 #include "Core/PowerPC/JitArm64/Jit.h"
@@ -68,17 +67,14 @@ void JitArm64::rfi(UGeckoInstruction inst)
   LDR(INDEX_UNSIGNED, WA, PPC_REG, PPCSTATE_OFF(spr[SPR_SRR0]));
   gpr.Unlock(WB, WC);
 
-  // WA is unlocked in this function
   WriteExceptionExit(WA);
+  gpr.Unlock(WA);
 }
 
 void JitArm64::bx(UGeckoInstruction inst)
 {
   INSTRUCTION_START
   JITDISABLE(bJITBranchOff);
-
-  gpr.Flush(FlushMode::FLUSH_ALL);
-  fpr.Flush(FlushMode::FLUSH_ALL);
 
   u32 destination;
   if (inst.AA)
@@ -94,6 +90,21 @@ void JitArm64::bx(UGeckoInstruction inst)
     gpr.Unlock(WA);
   }
 
+  if (!js.isLastInstruction)
+  {
+    if (inst.LK && !js.op->skipLRStack)
+    {
+      // We have to fake the stack as the RET instruction was not
+      // found in the same block. This is a big overhead, but still
+      // better than calling the dispatcher.
+      FakeLKExit(js.compilerPC + 4);
+    }
+    return;
+  }
+
+  gpr.Flush(FlushMode::FLUSH_ALL);
+  fpr.Flush(FlushMode::FLUSH_ALL);
+
   if (destination == js.compilerPC)
   {
     // make idle loops go faster
@@ -108,7 +119,7 @@ void JitArm64::bx(UGeckoInstruction inst)
     return;
   }
 
-  WriteExit(destination);
+  WriteExit(destination, inst.LK, js.compilerPC + 4);
 }
 
 void JitArm64::bcx(UGeckoInstruction inst)
@@ -158,7 +169,7 @@ void JitArm64::bcx(UGeckoInstruction inst)
   gpr.Flush(FlushMode::FLUSH_MAINTAIN_STATE);
   fpr.Flush(FlushMode::FLUSH_MAINTAIN_STATE);
 
-  WriteExit(destination);
+  WriteExit(destination, inst.LK, js.compilerPC + 4);
 
   SwitchToNearCode();
 
@@ -207,7 +218,10 @@ void JitArm64::bcctrx(UGeckoInstruction inst)
 
   LDR(INDEX_UNSIGNED, WA, PPC_REG, PPCSTATE_OFF(spr[SPR_CTR]));
   AND(WA, WA, 30, 29);  // Wipe the bottom 2 bits.
-  WriteExit(WA);
+
+  WriteExit(WA, inst.LK_3, js.compilerPC + 4);
+
+  gpr.Unlock(WA);
 }
 
 void JitArm64::bclrx(UGeckoInstruction inst)
@@ -219,6 +233,8 @@ void JitArm64::bclrx(UGeckoInstruction inst)
       (inst.BO & BO_DONT_DECREMENT_FLAG) == 0 || (inst.BO & BO_DONT_CHECK_CONDITION) == 0;
 
   ARM64Reg WA = gpr.GetReg();
+  ARM64Reg WB = inst.LK ? gpr.GetReg() : INVALID_REG;
+
   FixupBranch pCTRDontBranch;
   if ((inst.BO & BO_DONT_DECREMENT_FLAG) == 0)  // Decrement and test CTR
   {
@@ -251,7 +267,6 @@ void JitArm64::bclrx(UGeckoInstruction inst)
 
   if (inst.LK)
   {
-    ARM64Reg WB = gpr.GetReg();
     MOVI2R(WB, js.compilerPC + 4);
     STR(INDEX_UNSIGNED, WB, PPC_REG, PPCSTATE_OFF(spr[SPR_LR]));
     gpr.Unlock(WB);
@@ -260,7 +275,9 @@ void JitArm64::bclrx(UGeckoInstruction inst)
   gpr.Flush(conditional ? FlushMode::FLUSH_MAINTAIN_STATE : FlushMode::FLUSH_ALL);
   fpr.Flush(conditional ? FlushMode::FLUSH_MAINTAIN_STATE : FlushMode::FLUSH_ALL);
 
-  WriteExit(WA);
+  WriteBLRExit(WA);
+
+  gpr.Unlock(WA);
 
   if (conditional)
     SwitchToNearCode();

@@ -5,15 +5,14 @@
 #include "Common/CommonTypes.h"
 #include "Common/Logging/Log.h"
 
-#include "Core/ConfigManager.h"
-
 #include "VideoCommon/BPFunctions.h"
 #include "VideoCommon/BPMemory.h"
 #include "VideoCommon/RenderBase.h"
-#include "VideoCommon/VR.h"
+#include "VideoCommon/RenderState.h"
 #include "VideoCommon/VertexManagerBase.h"
 #include "VideoCommon/VideoCommon.h"
 #include "VideoCommon/VideoConfig.h"
+#include "VideoCommon/VR.h"
 
 namespace BPFunctions
 {
@@ -29,7 +28,9 @@ void FlushPipeline()
 
 void SetGenerationMode()
 {
-  g_renderer->SetGenerationMode();
+  RasterizationState state = {};
+  state.Generate(bpmem, g_vertex_manager->GetCurrentPrimitiveType(), !g_ActiveConfig.bDisableNearClipping);
+  g_renderer->SetRasterizationState(state);
 }
 
 void SetScissor()
@@ -70,25 +71,16 @@ void SetScissor()
 
 void SetDepthMode()
 {
-  g_renderer->SetDepthMode();
+  DepthState state = {};
+  state.Generate(bpmem);
+  g_renderer->SetDepthState(state);
 }
 
 void SetBlendMode()
 {
-  g_renderer->SetBlendMode(false);
-}
-void SetDitherMode()
-{
-  g_renderer->SetDitherMode();
-}
-void SetLogicOpMode()
-{
-  g_renderer->SetLogicOpMode();
-}
-
-void SetColorMask()
-{
-  g_renderer->SetColorMask();
+  BlendingState state = {};
+  state.Generate(bpmem);
+  g_renderer->SetBlendingState(state);
 }
 
 /* Explanation of the magic behind ClearScreen:
@@ -246,7 +238,7 @@ void OnPixelFormatChange()
   if (!g_ActiveConfig.bEFBEmulateFormatChanges)
     return;
 
-  auto old_format = Renderer::GetPrevPixelFormat();
+  auto old_format = g_renderer->GetPrevPixelFormat();
   auto new_format = bpmem.zcontrol.pixel_format;
 
   // no need to reinterpret pixel data in these cases
@@ -299,7 +291,7 @@ skip:
   DEBUG_LOG(VIDEO, "pixelfmt: pixel=%d, zc=%d", static_cast<int>(new_format),
             static_cast<int>(bpmem.zcontrol.zformat));
 
-  Renderer::StorePixelFormat(new_format);
+  g_renderer->StorePixelFormat(new_format);
 }
 
 void SetInterlacingMode(const BPCmd& bp)

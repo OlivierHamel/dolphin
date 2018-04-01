@@ -4,6 +4,7 @@
 
 #include "DolphinWX/Config/GameCubeConfigPane.h"
 
+#include <cassert>
 #include <string>
 
 #include <wx/button.h>
@@ -18,12 +19,15 @@
 #include "Common/Common.h"
 #include "Common/CommonPaths.h"
 #include "Common/FileUtil.h"
+#include "Common/StringUtil.h"
 #include "Core/ConfigManager.h"
 #include "Core/Core.h"
-#include "Core/HW/EXI.h"
-#include "Core/HW/GCMemcard.h"
+#include "Core/HW/EXI/EXI.h"
+#include "Core/HW/GCMemcard/GCMemcard.h"
+#include "Core/HW/GCPad.h"
 #include "Core/NetPlayProto.h"
 #include "DolphinWX/Config/ConfigMain.h"
+#include "DolphinWX/Input/MicButtonConfigDiag.h"
 #include "DolphinWX/WxEventUtils.h"
 #include "DolphinWX/WxUtils.h"
 
@@ -62,7 +66,7 @@ void GameCubeConfigPane::InitializeGUI()
       "Lets the system language be set to values that games were not designed for. This can allow "
       "the use of extra translations for a few games, but can also lead to text display issues."));
 
-  m_skip_bios_checkbox = new wxCheckBox(this, wxID_ANY, _("Skip BIOS"));
+  m_skip_ipl_checkbox = new wxCheckBox(this, wxID_ANY, _("Skip Main Menu"));
 
   if (!File::Exists(File::GetUserPath(D_GCUSER_IDX) + DIR_SEP + USA_DIR + DIR_SEP GC_IPL) &&
       !File::Exists(File::GetSysDirectory() + GC_SYS_DIR + DIR_SEP + USA_DIR + DIR_SEP GC_IPL) &&
@@ -71,8 +75,8 @@ void GameCubeConfigPane::InitializeGUI()
       !File::Exists(File::GetUserPath(D_GCUSER_IDX) + DIR_SEP + EUR_DIR + DIR_SEP GC_IPL) &&
       !File::Exists(File::GetSysDirectory() + GC_SYS_DIR + DIR_SEP + EUR_DIR + DIR_SEP GC_IPL))
   {
-    m_skip_bios_checkbox->Disable();
-    m_skip_bios_checkbox->SetToolTip(_("Put BIOS roms in User/GC/{region}."));
+    m_skip_ipl_checkbox->Disable();
+    m_skip_ipl_checkbox->SetToolTip(_("Put Main Menu roms in User/GC/{region}."));
   }
 
   // Device settings
@@ -98,7 +102,7 @@ void GameCubeConfigPane::InitializeGUI()
 
   // Populate the GameCube page
   wxGridBagSizer* const sGamecubeIPLSettings = new wxGridBagSizer(space5, space5);
-  sGamecubeIPLSettings->Add(m_skip_bios_checkbox, wxGBPosition(0, 0), wxGBSpan(1, 2));
+  sGamecubeIPLSettings->Add(m_skip_ipl_checkbox, wxGBPosition(0, 0), wxGBSpan(1, 2));
   sGamecubeIPLSettings->Add(new wxStaticText(this, wxID_ANY, _("System Language:")),
                             wxGBPosition(1, 0), wxDefaultSpan, wxALIGN_CENTER_VERTICAL);
   sGamecubeIPLSettings->Add(m_system_lang_choice, wxGBPosition(1, 1), wxDefaultSpan,
@@ -144,7 +148,7 @@ void GameCubeConfigPane::LoadGUIValues()
   const SConfig& startup_params = SConfig::GetInstance();
 
   m_system_lang_choice->SetSelection(startup_params.SelectedLanguage);
-  m_skip_bios_checkbox->SetValue(startup_params.bHLE_BS2);
+  m_skip_ipl_checkbox->SetValue(startup_params.bHLE_BS2);
   m_override_lang_checkbox->SetValue(startup_params.bOverrideGCLanguage);
 
   wxArrayString slot_devices;
@@ -154,10 +158,7 @@ void GameCubeConfigPane::LoadGUIValues()
   slot_devices.Add(_(EXIDEV_MEMDIR_STR));
   slot_devices.Add(_(EXIDEV_GECKO_STR));
   slot_devices.Add(_(EXIDEV_AGP_STR));
-
-#if HAVE_PORTAUDIO
   slot_devices.Add(_(EXIDEV_MIC_STR));
-#endif
 
   wxArrayString sp1_devices;
   sp1_devices.Add(_(DEV_NONE_STR));
@@ -167,6 +168,7 @@ void GameCubeConfigPane::LoadGUIValues()
   for (int i = 0; i < 3; ++i)
   {
     bool isMemcard = false;
+    bool isMic = false;
 
     // Add strings to the wxChoice list, the third wxChoice is the SP1 slot
     if (i == 2)
@@ -176,34 +178,34 @@ void GameCubeConfigPane::LoadGUIValues()
 
     switch (SConfig::GetInstance().m_EXIDevice[i])
     {
-    case EXIDEVICE_NONE:
+    case ExpansionInterface::EXIDEVICE_NONE:
       m_exi_devices[i]->SetStringSelection(slot_devices[0]);
       break;
-    case EXIDEVICE_MEMORYCARD:
+    case ExpansionInterface::EXIDEVICE_MEMORYCARD:
       isMemcard = m_exi_devices[i]->SetStringSelection(slot_devices[2]);
       break;
-    case EXIDEVICE_MEMORYCARDFOLDER:
+    case ExpansionInterface::EXIDEVICE_MEMORYCARDFOLDER:
       m_exi_devices[i]->SetStringSelection(slot_devices[3]);
       break;
-    case EXIDEVICE_GECKO:
+    case ExpansionInterface::EXIDEVICE_GECKO:
       m_exi_devices[i]->SetStringSelection(slot_devices[4]);
       break;
-    case EXIDEVICE_AGP:
+    case ExpansionInterface::EXIDEVICE_AGP:
       isMemcard = m_exi_devices[i]->SetStringSelection(slot_devices[5]);
       break;
-    case EXIDEVICE_MIC:
-      m_exi_devices[i]->SetStringSelection(slot_devices[6]);
+    case ExpansionInterface::EXIDEVICE_MIC:
+      isMic = m_exi_devices[i]->SetStringSelection(slot_devices[6]);
       break;
-    case EXIDEVICE_ETH:
+    case ExpansionInterface::EXIDEVICE_ETH:
       m_exi_devices[i]->SetStringSelection(sp1_devices[2]);
       break;
-    case EXIDEVICE_DUMMY:
+    case ExpansionInterface::EXIDEVICE_DUMMY:
     default:
       m_exi_devices[i]->SetStringSelection(slot_devices[1]);
       break;
     }
 
-    if (!isMemcard && i < 2)
+    if (!isMemcard && !isMic && i < 2)
       m_memcard_path[i]->Disable();
   }
 }
@@ -217,8 +219,8 @@ void GameCubeConfigPane::BindEvents()
                                  &GameCubeConfigPane::OnOverrideLanguageCheckBoxChanged, this);
   m_override_lang_checkbox->Bind(wxEVT_UPDATE_UI, &WxEventUtils::OnEnableIfCoreNotRunning);
 
-  m_skip_bios_checkbox->Bind(wxEVT_CHECKBOX, &GameCubeConfigPane::OnSkipBiosCheckBoxChanged, this);
-  m_skip_bios_checkbox->Bind(wxEVT_UPDATE_UI, &WxEventUtils::OnEnableIfCoreNotRunning);
+  m_skip_ipl_checkbox->Bind(wxEVT_CHECKBOX, &GameCubeConfigPane::OnSkipIPLCheckBoxChanged, this);
+  m_skip_ipl_checkbox->Bind(wxEVT_UPDATE_UI, &WxEventUtils::OnEnableIfCoreNotRunning);
 
   m_exi_devices[0]->Bind(wxEVT_CHOICE, &GameCubeConfigPane::OnSlotAChanged, this);
   m_exi_devices[0]->Bind(wxEVT_UPDATE_UI, &WxEventUtils::OnEnableIfNetplayNotRunning);
@@ -245,9 +247,9 @@ void GameCubeConfigPane::OnOverrideLanguageCheckBoxChanged(wxCommandEvent& event
   AddPendingEvent(wxCommandEvent(wxDOLPHIN_CFG_REFRESH_LIST));
 }
 
-void GameCubeConfigPane::OnSkipBiosCheckBoxChanged(wxCommandEvent& event)
+void GameCubeConfigPane::OnSkipIPLCheckBoxChanged(wxCommandEvent& event)
 {
-  SConfig::GetInstance().bHLE_BS2 = m_skip_bios_checkbox->IsChecked();
+  SConfig::GetInstance().bHLE_BS2 = m_skip_ipl_checkbox->IsChecked();
 }
 
 void GameCubeConfigPane::OnSlotAChanged(wxCommandEvent& event)
@@ -265,42 +267,64 @@ void GameCubeConfigPane::OnSP1Changed(wxCommandEvent& event)
   ChooseEXIDevice(event.GetString(), 2);
 }
 
+void GameCubeConfigPane::HandleEXISlotChange(int slot, const wxString& title)
+{
+  assert(slot >= 0 && slot <= 1);
+
+  if (!m_exi_devices[slot]->GetStringSelection().compare(_(EXIDEV_MIC_STR)))
+  {
+    InputConfig* const pad_plugin = Pad::GetConfig();
+    MicButtonConfigDialog dialog(this, *pad_plugin, title, slot);
+    dialog.ShowModal();
+  }
+  else
+  {
+    ChooseSlotPath(slot == 0, SConfig::GetInstance().m_EXIDevice[slot]);
+  }
+}
+
 void GameCubeConfigPane::OnSlotAButtonClick(wxCommandEvent& event)
 {
-  ChooseSlotPath(true, SConfig::GetInstance().m_EXIDevice[0]);
+  HandleEXISlotChange(0, wxString(_("GameCube Microphone Slot A")));
 }
 
 void GameCubeConfigPane::OnSlotBButtonClick(wxCommandEvent& event)
 {
-  ChooseSlotPath(false, SConfig::GetInstance().m_EXIDevice[1]);
+  HandleEXISlotChange(1, wxString(_("GameCube Microphone Slot B")));
 }
 
 void GameCubeConfigPane::ChooseEXIDevice(const wxString& deviceName, int deviceNum)
 {
-  TEXIDevices tempType;
+  ExpansionInterface::TEXIDevices tempType;
 
   if (!deviceName.compare(_(EXIDEV_MEMCARD_STR)))
-    tempType = EXIDEVICE_MEMORYCARD;
+    tempType = ExpansionInterface::EXIDEVICE_MEMORYCARD;
   else if (!deviceName.compare(_(EXIDEV_MEMDIR_STR)))
-    tempType = EXIDEVICE_MEMORYCARDFOLDER;
+    tempType = ExpansionInterface::EXIDEVICE_MEMORYCARDFOLDER;
   else if (!deviceName.compare(_(EXIDEV_MIC_STR)))
-    tempType = EXIDEVICE_MIC;
+    tempType = ExpansionInterface::EXIDEVICE_MIC;
   else if (!deviceName.compare(_(EXIDEV_BBA_STR)))
-    tempType = EXIDEVICE_ETH;
+    tempType = ExpansionInterface::EXIDEVICE_ETH;
   else if (!deviceName.compare(_(EXIDEV_AGP_STR)))
-    tempType = EXIDEVICE_AGP;
+    tempType = ExpansionInterface::EXIDEVICE_AGP;
   else if (!deviceName.compare(_(EXIDEV_GECKO_STR)))
-    tempType = EXIDEVICE_GECKO;
+    tempType = ExpansionInterface::EXIDEVICE_GECKO;
   else if (!deviceName.compare(_(DEV_NONE_STR)))
-    tempType = EXIDEVICE_NONE;
+    tempType = ExpansionInterface::EXIDEVICE_NONE;
   else
-    tempType = EXIDEVICE_DUMMY;
+    tempType = ExpansionInterface::EXIDEVICE_DUMMY;
 
   // Gray out the memcard path button if we're not on a memcard or AGP
-  if (tempType == EXIDEVICE_MEMORYCARD || tempType == EXIDEVICE_AGP)
+  if (tempType == ExpansionInterface::EXIDEVICE_MEMORYCARD ||
+      tempType == ExpansionInterface::EXIDEVICE_AGP ||
+      tempType == ExpansionInterface::EXIDEVICE_MIC)
+  {
     m_memcard_path[deviceNum]->Enable();
+  }
   else if (deviceNum == 0 || deviceNum == 1)
+  {
     m_memcard_path[deviceNum]->Disable();
+  }
 
   SConfig::GetInstance().m_EXIDevice[deviceNum] = tempType;
 
@@ -314,9 +338,9 @@ void GameCubeConfigPane::ChooseEXIDevice(const wxString& deviceName, int deviceN
   }
 }
 
-void GameCubeConfigPane::ChooseSlotPath(bool is_slot_a, TEXIDevices device_type)
+void GameCubeConfigPane::ChooseSlotPath(bool is_slot_a, ExpansionInterface::TEXIDevices device_type)
 {
-  bool memcard = (device_type == EXIDEVICE_MEMORYCARD);
+  bool memcard = (device_type == ExpansionInterface::EXIDEVICE_MEMORYCARD);
   std::string path;
   std::string cardname;
   std::string ext;
@@ -335,18 +359,15 @@ void GameCubeConfigPane::ChooseSlotPath(bool is_slot_a, TEXIDevices device_type)
 
   if (!filename.empty())
   {
-    if (File::Exists(filename))
+    if (memcard && File::Exists(filename))
     {
-      if (memcard)
+      GCMemcard memorycard(filename);
+      if (!memorycard.IsValid())
       {
-        GCMemcard memorycard(filename);
-        if (!memorycard.IsValid())
-        {
-          WxUtils::ShowErrorDialog(wxString::Format(_("Cannot use that file as a memory card.\n%s\n"
-                                                      "is not a valid GameCube memory card file"),
-                                                    filename.c_str()));
-          return;
-        }
+        WxUtils::ShowErrorDialog(wxString::Format(_("Cannot use that file as a memory card.\n%s\n"
+                                                    "is not a valid GameCube memory card file"),
+                                                  filename.c_str()));
+        return;
       }
     }
 

@@ -28,7 +28,7 @@ class Renderer : public ::Renderer
 {
 public:
   Renderer(std::unique_ptr<SwapChain> swap_chain);
-  ~Renderer();
+  ~Renderer() override;
 
   static Renderer* GetInstance();
 
@@ -41,7 +41,6 @@ public:
   void PokeEFB(EFBAccessType type, const EfbPokeData* points, size_t num_points) override;
   u16 BBoxRead(int index) override;
   void BBoxWrite(int index, u16 value) override;
-  u32 GetMaxTextureSize() override { return 16 * 1024; }
   TargetRectangle ConvertEFBRectangle(const EFBRectangle& rc) override;
 
   void AsyncTimewarpDraw() override;
@@ -54,19 +53,16 @@ public:
 
   void ReinterpretPixelData(unsigned int convtype) override;
 
-  void ApplyState(bool bUseDstAlpha) override;
+  void ApplyState() override;
 
   void ResetAPIState() override;
   void RestoreAPIState() override;
 
-  void SetColorMask() override;
-  void SetBlendMode(bool force_update) override;
+  void SetBlendingState(const BlendingState& state) override;
   void SetScissorRect(const EFBRectangle& rc) override;
-  void SetGenerationMode() override;
-  void SetDepthMode() override;
-  void SetLogicOpMode() override;
-  void SetDitherMode() override;
-  void SetSamplerState(int stage, int texindex, bool custom_tex) override;
+  void SetRasterizationState(const RasterizationState& state) override;
+  void SetDepthState(const DepthState& state) override;
+  void SetSamplerState(u32 index, const SamplerState& state) override;
   void SetInterlacingMode() override;
   void SetViewport() override;
 
@@ -87,30 +83,39 @@ private:
   void OnSwapChainResized();
   void BindEFBToStateTracker();
   void ResizeEFBTextures();
-  void ResizeSwapChain();
 
   void RecompileShaders();
   bool CompileShaders();
   void DestroyShaders();
 
+  // Transitions EFB/XFB buffers to SHADER_READ_ONLY, ready for presenting/dumping.
+  // If MSAA is enabled, and XFB is disabled, also resolves the EFB buffer.
+  void TransitionBuffersForSwap(const TargetRectangle& scaled_rect,
+                                const XFBSourceBase* const* xfb_sources, u32 xfb_count);
+
   // Draw either the EFB, or specified XFB sources to the currently-bound framebuffer.
-  void DrawFrame(VkRenderPass render_pass, const EFBRectangle& rc, u32 xfb_addr,
+  void DrawFrame(VkRenderPass render_pass, const TargetRectangle& target_rect,
+                 const TargetRectangle& scaled_efb_rect, u32 xfb_addr,
                  const XFBSourceBase* const* xfb_sources, u32 xfb_count, u32 fb_width,
                  u32 fb_stride, u32 fb_height);
-  void DrawEFB(VkRenderPass render_pass, const EFBRectangle& rc);
-  void DrawVirtualXFB(VkRenderPass render_pass, u32 xfb_addr,
+  void DrawEFB(VkRenderPass render_pass, const TargetRectangle& target_rect,
+               const TargetRectangle& scaled_efb_rect);
+  void DrawVirtualXFB(VkRenderPass render_pass, const TargetRectangle& target_rect, u32 xfb_addr,
                       const XFBSourceBase* const* xfb_sources, u32 xfb_count, u32 fb_width,
                       u32 fb_stride, u32 fb_height);
-  void DrawRealXFB(VkRenderPass render_pass, const XFBSourceBase* const* xfb_sources, u32 xfb_count,
-                   u32 fb_width, u32 fb_stride, u32 fb_height);
+  void DrawRealXFB(VkRenderPass render_pass, const TargetRectangle& target_rect,
+                   const XFBSourceBase* const* xfb_sources, u32 xfb_count, u32 fb_width,
+                   u32 fb_stride, u32 fb_height);
 
   // Draw the frame, as well as the OSD to the swap chain.
-  void DrawScreen(const EFBRectangle& rc, u32 xfb_addr, const XFBSourceBase* const* xfb_sources,
-                  u32 xfb_count, u32 fb_width, u32 fb_stride, u32 fb_height);
+  void DrawScreen(const TargetRectangle& scaled_efb_rect, u32 xfb_addr,
+                  const XFBSourceBase* const* xfb_sources, u32 xfb_count, u32 fb_width,
+                  u32 fb_stride, u32 fb_height);
 
   // Draw the frame only to the screenshot buffer.
-  bool DrawFrameDump(const EFBRectangle& rc, u32 xfb_addr, const XFBSourceBase* const* xfb_sources,
-                     u32 xfb_count, u32 fb_width, u32 fb_stride, u32 fb_height, u64 ticks);
+  bool DrawFrameDump(const TargetRectangle& scaled_efb_rect, u32 xfb_addr,
+                     const XFBSourceBase* const* xfb_sources, u32 xfb_count, u32 fb_width,
+                     u32 fb_stride, u32 fb_height, u64 ticks);
 
   // Sets up renderer state to permit framedumping.
   // Ideally we would have EndFrameDumping be a virtual method of Renderer, but due to various
@@ -135,7 +140,7 @@ private:
 
   // Copies/scales an image to the currently-bound framebuffer.
   void BlitScreen(VkRenderPass render_pass, const TargetRectangle& dst_rect,
-                  const TargetRectangle& src_rect, const Texture2D* src_tex, bool linear_filter);
+                  const TargetRectangle& src_rect, const Texture2D* src_tex);
 
   bool ResizeFrameDumpBuffer(u32 new_width, u32 new_height);
   void DestroyFrameDumpResources();
@@ -152,11 +157,6 @@ private:
 
   // Shaders used for clear/blit.
   VkShaderModule m_clear_fragment_shader = VK_NULL_HANDLE;
-
-  // NOTE: The blit shader here is used for the final copy from the source buffer(s) to the swap
-  // chain buffer for presentation. It ignores the alpha channel of the input image and sets the
-  // alpha channel to 1.0 to avoid issues with frame dumping and screenshots.
-  VkShaderModule m_blit_fragment_shader = VK_NULL_HANDLE;
 
   // Texture used for screenshot/frame dumping
   std::unique_ptr<Texture2D> m_frame_dump_render_texture;

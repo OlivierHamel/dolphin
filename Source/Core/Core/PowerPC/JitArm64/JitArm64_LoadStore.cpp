@@ -242,41 +242,23 @@ void JitArm64::SafeStoreFromReg(s32 dest, u32 value, s32 regOffset, u32 flags, s
     if (accessSize != 8)
       WA = gpr.GetReg();
 
-    u64 base_ptr = std::min((u64)&GPFifo::m_gatherPipeCount, (u64)&GPFifo::m_gatherPipe);
-    u32 count_off = (u64)&GPFifo::m_gatherPipeCount - base_ptr;
-    u32 pipe_off = (u64)&GPFifo::m_gatherPipe - base_ptr;
-
-    MOVI2R(X30, base_ptr);
-
-    if (pipe_off)
-      ADD(X1, X30, pipe_off);
-
-    LDR(INDEX_UNSIGNED, W0, X30, count_off);
+    MOVP2R(X1, &GPFifo::g_gather_pipe_ptr);
+    LDR(INDEX_UNSIGNED, X0, X1, 0);
     if (accessSize == 32)
     {
       REV32(WA, RS);
-      if (pipe_off)
-        STR(WA, X1, ArithOption(X0));
-      else
-        STR(WA, X30, ArithOption(X0));
+      STR(INDEX_POST, WA, X0, 4);
     }
     else if (accessSize == 16)
     {
       REV16(WA, RS);
-      if (pipe_off)
-        STRH(WA, X1, ArithOption(X0));
-      else
-        STRH(WA, X30, ArithOption(X0));
+      STRH(INDEX_POST, WA, X0, 2);
     }
     else
     {
-      if (pipe_off)
-        STRB(RS, X1, ArithOption(X0));
-      else
-        STRB(RS, X30, ArithOption(X0));
+      STRB(INDEX_POST, RS, X0, 1);
     }
-    ADD(W0, W0, accessSize >> 3);
-    STR(INDEX_UNSIGNED, W0, X30, count_off);
+    STR(INDEX_UNSIGNED, X0, X1, 0);
     js.fifoBytesSinceCheck += accessSize >> 3;
 
     if (accessSize != 8)
@@ -374,12 +356,15 @@ void JitArm64::lXX(UGeckoInstruction inst)
   SafeLoadToReg(d, update ? a : (a ? a : -1), offsetReg, flags, offset, update);
 
   // LWZ idle skipping
-  if (SConfig::GetInstance().bSkipIdle && inst.OPCD == 32 && MergeAllowedNextInstructions(2) &&
+  if (SConfig::GetInstance().bSkipIdle && inst.OPCD == 32 && CanMergeNextInstructions(2) &&
       (inst.hex & 0xFFFF0000) == 0x800D0000 &&  // lwz r0, XXXX(r13)
       (js.op[1].inst.hex == 0x28000000 ||
        (SConfig::GetInstance().bWii && js.op[1].inst.hex == 0x2C000000)) &&  // cmpXwi r0,0
       js.op[2].inst.hex == 0x4182fff8)                                       // beq -8
   {
+    ARM64Reg WA = gpr.GetReg();
+    ARM64Reg XA = EncodeRegTo64(WA);
+
     // if it's still 0, we can wait until the next event
     FixupBranch noIdle = CBNZ(gpr.R(d));
 
@@ -390,8 +375,6 @@ void JitArm64::lXX(UGeckoInstruction inst)
     gpr.Flush(FLUSH_MAINTAIN_STATE);
     fpr.Flush(FLUSH_MAINTAIN_STATE);
 
-    ARM64Reg WA = gpr.GetReg();
-    ARM64Reg XA = EncodeRegTo64(WA);
     MOVP2R(XA, &CoreTiming::Idle);
     BLR(XA);
     gpr.Unlock(WA);
@@ -516,8 +499,8 @@ void JitArm64::lmw(UGeckoInstruction inst)
       LDP(INDEX_POST, EncodeRegTo64(RX1), EncodeRegTo64(RX3), XA, 16);
       REV32(EncodeRegTo64(RX1), EncodeRegTo64(RX1));
       REV32(EncodeRegTo64(RX3), EncodeRegTo64(RX3));
-      ORR(EncodeRegTo64(RX2), ZR, EncodeRegTo64(RX1), ArithOption(EncodeRegTo64(RX1), ST_LSR, 32));
-      ORR(EncodeRegTo64(RX4), ZR, EncodeRegTo64(RX3), ArithOption(EncodeRegTo64(RX3), ST_LSR, 32));
+      LSR(EncodeRegTo64(RX2), EncodeRegTo64(RX1), 32);
+      LSR(EncodeRegTo64(RX4), EncodeRegTo64(RX3), 32);
       i += 3;
     }
     else if (remaining >= 2)
@@ -597,7 +580,7 @@ void JitArm64::dcbx(UGeckoInstruction inst)
   AND(value, addr, 32 - 10, 28 - 10);  // upper three bits and last 10 bit are masked for the bitset
                                        // of cachelines, 0x1ffffc00
   LSR(value, value, 5 + 5);            // >> 5 for cache line size, >> 5 for width of bitset
-  MOVP2R(EncodeRegTo64(WA), jit->GetBlockCache()->GetBlockBitSet());
+  MOVP2R(EncodeRegTo64(WA), GetBlockCache()->GetBlockBitSet());
   LDR(value, EncodeRegTo64(WA), ArithOption(EncodeRegTo64(value), true));
 
   LSR(addr, addr, 5);  // mask sizeof cacheline, & 0x1f is the position within the bitset
@@ -644,7 +627,7 @@ void JitArm64::dcbt(UGeckoInstruction inst)
   // This is important because invalidating the block cache when we don't
   // need to is terrible for performance.
   // (Invalidating the jit block cache on dcbst is a heuristic.)
-  if (MergeAllowedNextInstructions(1) && js.op[1].inst.OPCD == 31 && js.op[1].inst.SUBOP10 == 54 &&
+  if (CanMergeNextInstructions(1) && js.op[1].inst.OPCD == 31 && js.op[1].inst.SUBOP10 == 54 &&
       js.op[1].inst.RA == inst.RA && js.op[1].inst.RB == inst.RB)
   {
     js.skipInstructions = 1;
@@ -655,7 +638,10 @@ void JitArm64::dcbz(UGeckoInstruction inst)
 {
   INSTRUCTION_START
   JITDISABLE(bJITLoadStoreOff);
+  if (SConfig::GetInstance().bDCBZOFF)
+    return;
   FALLBACK_IF(jo.memcheck);
+  FALLBACK_IF(SConfig::GetInstance().bLowDCBZHack);
 
   int a = inst.RA, b = inst.RB;
 
@@ -672,7 +658,7 @@ void JitArm64::dcbz(UGeckoInstruction inst)
     {
       // full imm_addr
       u32 imm_addr = gpr.GetImm(b) + gpr.GetImm(a);
-      MOVI2R(addr_reg, imm_addr);
+      MOVI2R(addr_reg, imm_addr & ~31);
     }
     else if (is_imm_a || is_imm_b)
     {
@@ -680,11 +666,13 @@ void JitArm64::dcbz(UGeckoInstruction inst)
       ARM64Reg base = is_imm_a ? gpr.R(b) : gpr.R(a);
       u32 imm_offset = is_imm_a ? gpr.GetImm(a) : gpr.GetImm(b);
       ADDI2R(addr_reg, base, imm_offset, addr_reg);
+      ANDI2R(addr_reg, addr_reg, ~31);
     }
     else
     {
       // Both are registers
       ADD(addr_reg, gpr.R(a), gpr.R(b));
+      ANDI2R(addr_reg, addr_reg, ~31);
     }
   }
   else
@@ -693,11 +681,11 @@ void JitArm64::dcbz(UGeckoInstruction inst)
     if (gpr.IsImm(b))
     {
       u32 imm_addr = gpr.GetImm(b);
-      MOVI2R(addr_reg, imm_addr);
+      MOVI2R(addr_reg, imm_addr & ~31);
     }
     else
     {
-      MOV(addr_reg, gpr.R(b));
+      ANDI2R(addr_reg, gpr.R(b), ~31);
     }
   }
 

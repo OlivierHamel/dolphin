@@ -20,6 +20,33 @@ import java.io.PrintWriter;
 import java.io.UnsupportedEncodingException;
 import java.util.HashMap;
 import java.util.Set;
+import java.util.TreeSet;
+
+/**
+ * A HashMap<String, SettingSection> that constructs a new SettingSection instead of returning null
+ * when getting a key not already in the map
+ */
+final class SettingsSectionMap extends HashMap<String, SettingSection>
+{
+	@Override
+	public SettingSection get(Object key)
+	{
+		if (!(key instanceof String))
+		{
+			return null;
+		}
+
+		String stringKey = (String)key;
+
+		if (!super.containsKey(stringKey))
+		{
+			SettingSection section = new SettingSection(stringKey);
+			super.put(stringKey, section);
+			return section;
+		}
+		return super.get(key);
+	}
+}
 
 /**
  * Contains static methods for interacting with .ini files in which settings are stored.
@@ -45,14 +72,19 @@ public final class SettingsFile
 
 	public static final String SECTION_WIIMOTE = "Wiimote";
 
+	public static final String SECTION_BINDINGS = "Android";
+
 	public static final String KEY_CPU_CORE = "CPUCore";
 	public static final String KEY_DUAL_CORE = "CPUThread";
 	public static final String KEY_OVERCLOCK_ENABLE = "OverclockEnable";
 	public static final String KEY_OVERCLOCK_PERCENT = "Overclock";
 	public static final String KEY_VIDEO_BACKEND = "GFXBackend";
+	public static final String KEY_AUDIO_STRETCH = "AudioStretch";
+	public static final String KEY_SLOT_A_DEVICE = "SlotA";
+	public static final String KEY_SLOT_B_DEVICE = "SlotB";
 
 	public static final String KEY_SHOW_FPS = "ShowFPS";
-	public static final String KEY_INTERNAL_RES = "EFBScale";
+	public static final String KEY_INTERNAL_RES = "InternalResolution";
 	public static final String KEY_FSAA = "MSAA";
 	public static final String KEY_ANISOTROPY = "MaxAnisotropy";
 	public static final String KEY_POST_SHADER = "PostProcessingShader";
@@ -70,17 +102,165 @@ public final class SettingsFile
 	public static final String KEY_IGNORE_FORMAT = "EFBEmulateFormatChanges";
 	public static final String KEY_EFB_TEXTURE = "EFBToTextureEnable";
 	public static final String KEY_TEXCACHE_ACCURACY = "SafeTextureCacheColorSamples";
+	public static final String KEY_GPU_TEXTURE_DECODING = "EnableGPUTextureDecoding";
 	public static final String KEY_XFB = "UseXFB";
 	public static final String KEY_XFB_REAL = "UseRealXFB";
 	public static final String KEY_FAST_DEPTH = "FastDepthCalc";
 	public static final String KEY_ASPECT_RATIO = "AspectRatio";
+	public static final String KEY_UBERSHADER_MODE = "UberShaderMode";
+	public static final String KEY_DISABLE_SPECIALIZED_SHADERS = "DisableSpecializedShaders";
+	public static final String KEY_BACKGROUND_SHADER_COMPILING = "BackgroundShaderCompiling";
 
 	public static final String KEY_GCPAD_TYPE = "SIDevice";
+
+	public static final String KEY_GCBIND_A = "InputA_";
+	public static final String KEY_GCBIND_B = "InputB_";
+	public static final String KEY_GCBIND_X = "InputX_";
+	public static final String KEY_GCBIND_Y = "InputY_";
+	public static final String KEY_GCBIND_Z = "InputZ_";
+	public static final String KEY_GCBIND_START = "InputStart_";
+	public static final String KEY_GCBIND_CONTROL_UP = "MainUp_";
+	public static final String KEY_GCBIND_CONTROL_DOWN = "MainDown_";
+	public static final String KEY_GCBIND_CONTROL_LEFT = "MainLeft_";
+	public static final String KEY_GCBIND_CONTROL_RIGHT = "MainRight_";
+	public static final String KEY_GCBIND_C_UP = "CStickUp_";
+	public static final String KEY_GCBIND_C_DOWN = "CStickDown_";
+	public static final String KEY_GCBIND_C_LEFT = "CStickLeft_";
+	public static final String KEY_GCBIND_C_RIGHT = "CStickRight_";
+	public static final String KEY_GCBIND_TRIGGER_L = "InputL_";
+	public static final String KEY_GCBIND_TRIGGER_R = "InputR_";
+	public static final String KEY_GCBIND_DPAD_UP = "DPadUp_";
+	public static final String KEY_GCBIND_DPAD_DOWN = "DPadDown_";
+	public static final String KEY_GCBIND_DPAD_LEFT = "DPadLeft_";
+	public static final String KEY_GCBIND_DPAD_RIGHT = "DPadRight_";
 
 	public static final String KEY_GCADAPTER_RUMBLE = "AdapterRumble";
 	public static final String KEY_GCADAPTER_BONGOS = "SimulateKonga";
 
 	public static final String KEY_WIIMOTE_TYPE = "Source";
+	public static final String KEY_WIIMOTE_EXTENSION = "Extension";
+
+	public static final String KEY_WIIBIND_A = "WiimoteA_";
+	public static final String KEY_WIIBIND_B = "WiimoteB_";
+	public static final String KEY_WIIBIND_1 = "Wiimote1_";
+	public static final String KEY_WIIBIND_2 = "Wiimote2_";
+	public static final String KEY_WIIBIND_MINUS = "WiimoteMinus_";
+	public static final String KEY_WIIBIND_PLUS = "WiimotePlus_";
+	public static final String KEY_WIIBIND_HOME = "WiimoteHome_";
+	public static final String KEY_WIIBIND_IR_UP = "IRUp_";
+	public static final String KEY_WIIBIND_IR_DOWN = "IRDown_";
+	public static final String KEY_WIIBIND_IR_LEFT = "IRLeft_";
+	public static final String KEY_WIIBIND_IR_RIGHT = "IRRight_";
+	public static final String KEY_WIIBIND_IR_FORWARD = "IRForward_";
+	public static final String KEY_WIIBIND_IR_BACKWARD = "IRBackward_";
+	public static final String KEY_WIIBIND_IR_HIDE = "IRHide_";
+	public static final String KEY_WIIBIND_SWING_UP = "SwingUp_";
+	public static final String KEY_WIIBIND_SWING_DOWN = "SwingDown_";
+	public static final String KEY_WIIBIND_SWING_LEFT = "SwingLeft_";
+	public static final String KEY_WIIBIND_SWING_RIGHT = "SwingRight_";
+	public static final String KEY_WIIBIND_SWING_FORWARD = "SwingForward_";
+	public static final String KEY_WIIBIND_SWING_BACKWARD = "SwingBackward_";
+	public static final String KEY_WIIBIND_TILT_FORWARD = "TiltForward_";
+	public static final String KEY_WIIBIND_TILT_BACKWARD = "TiltBackward_";
+	public static final String KEY_WIIBIND_TILT_LEFT = "TiltLeft_";
+	public static final String KEY_WIIBIND_TILT_RIGHT = "TiltRight_";
+	public static final String KEY_WIIBIND_TILT_MODIFIER = "TiltModifier_";
+	public static final String KEY_WIIBIND_SHAKE_X = "ShakeX_";
+	public static final String KEY_WIIBIND_SHAKE_Y = "ShakeY_";
+	public static final String KEY_WIIBIND_SHAKE_Z = "ShakeZ_";
+	public static final String KEY_WIIBIND_DPAD_UP = "WiimoteUp_";
+	public static final String KEY_WIIBIND_DPAD_DOWN = "WiimoteDown_";
+	public static final String KEY_WIIBIND_DPAD_LEFT = "WiimoteLeft_";
+	public static final String KEY_WIIBIND_DPAD_RIGHT = "WiimoteRight_";
+	public static final String KEY_WIIBIND_NUNCHUK_C = "NunchukC_";
+	public static final String KEY_WIIBIND_NUNCHUK_Z = "NunchukZ_";
+	public static final String KEY_WIIBIND_NUNCHUK_UP = "NunchukUp_";
+	public static final String KEY_WIIBIND_NUNCHUK_DOWN = "NunchukDown_";
+	public static final String KEY_WIIBIND_NUNCHUK_LEFT = "NunchukLeft_";
+	public static final String KEY_WIIBIND_NUNCHUK_RIGHT = "NunchukRight_";
+	public static final String KEY_WIIBIND_NUNCHUK_SWING_UP = "NunchukSwingUp_";
+	public static final String KEY_WIIBIND_NUNCHUK_SWING_DOWN = "NunchukSwingDown_";
+	public static final String KEY_WIIBIND_NUNCHUK_SWING_LEFT = "NunchukSwingLeft_";
+	public static final String KEY_WIIBIND_NUNCHUK_SWING_RIGHT = "NunchukSwingRight_";
+	public static final String KEY_WIIBIND_NUNCHUK_SWING_FORWARD = "NunchukSwingForward_";
+	public static final String KEY_WIIBIND_NUNCHUK_SWING_BACKWARD = "NunchukSwingBackward_";
+	public static final String KEY_WIIBIND_NUNCHUK_TILT_FORWARD = "NunchukTiltForward_";
+	public static final String KEY_WIIBIND_NUNCHUK_TILT_BACKWARD = "NunchukTiltBackward_";
+	public static final String KEY_WIIBIND_NUNCHUK_TILT_LEFT = "NunchukTiltLeft_";
+	public static final String KEY_WIIBIND_NUNCHUK_TILT_RIGHT = "NunchukTiltRight_";
+	public static final String KEY_WIIBIND_NUNCHUK_TILT_MODIFIER = "NunchukTiltModifier_";
+	public static final String KEY_WIIBIND_NUNCHUK_SHAKE_X = "NunchukShakeX_";
+	public static final String KEY_WIIBIND_NUNCHUK_SHAKE_Y = "NunchukShakeY_";
+	public static final String KEY_WIIBIND_NUNCHUK_SHAKE_Z = "NunchukShakeZ_";
+	public static final String KEY_WIIBIND_CLASSIC_A = "ClassicA_";
+	public static final String KEY_WIIBIND_CLASSIC_B = "ClassicB_";
+	public static final String KEY_WIIBIND_CLASSIC_X = "ClassicX_";
+	public static final String KEY_WIIBIND_CLASSIC_Y = "ClassicY_";
+	public static final String KEY_WIIBIND_CLASSIC_ZL = "ClassicZL_";
+	public static final String KEY_WIIBIND_CLASSIC_ZR = "ClassicZR_";
+	public static final String KEY_WIIBIND_CLASSIC_MINUS = "ClassicMinus_";
+	public static final String KEY_WIIBIND_CLASSIC_PLUS = "ClassicPlus_";
+	public static final String KEY_WIIBIND_CLASSIC_HOME = "ClassicHome_";
+	public static final String KEY_WIIBIND_CLASSIC_LEFT_UP = "ClassicLeftStickUp_";
+	public static final String KEY_WIIBIND_CLASSIC_LEFT_DOWN = "ClassicLeftStickDown_";
+	public static final String KEY_WIIBIND_CLASSIC_LEFT_LEFT = "ClassicLeftStickLeft_";
+	public static final String KEY_WIIBIND_CLASSIC_LEFT_RIGHT = "ClassicLeftStickRight_";
+	public static final String KEY_WIIBIND_CLASSIC_RIGHT_UP = "ClassicRightStickUp_";
+	public static final String KEY_WIIBIND_CLASSIC_RIGHT_DOWN = "ClassicRightStickDown_";
+	public static final String KEY_WIIBIND_CLASSIC_RIGHT_LEFT = "ClassicRightStickLeft_";
+	public static final String KEY_WIIBIND_CLASSIC_RIGHT_RIGHT = "ClassicRightStickRight_";
+	public static final String KEY_WIIBIND_CLASSIC_TRIGGER_L = "ClassicTriggerL_";
+	public static final String KEY_WIIBIND_CLASSIC_TRIGGER_R = "ClassicTriggerR_";
+	public static final String KEY_WIIBIND_CLASSIC_DPAD_UP = "ClassicUp_";
+	public static final String KEY_WIIBIND_CLASSIC_DPAD_DOWN = "ClassicDown_";
+	public static final String KEY_WIIBIND_CLASSIC_DPAD_LEFT = "ClassicLeft_";
+	public static final String KEY_WIIBIND_CLASSIC_DPAD_RIGHT = "ClassicRight_";
+	public static final String KEY_WIIBIND_GUITAR_FRET_GREEN = "GuitarGreen_";
+	public static final String KEY_WIIBIND_GUITAR_FRET_RED = "GuitarRed_";
+	public static final String KEY_WIIBIND_GUITAR_FRET_YELLOW = "GuitarYellow_";
+	public static final String KEY_WIIBIND_GUITAR_FRET_BLUE = "GuitarBlue_";
+	public static final String KEY_WIIBIND_GUITAR_FRET_ORANGE = "GuitarOrange_";
+	public static final String KEY_WIIBIND_GUITAR_STRUM_UP = "GuitarStrumUp_";
+	public static final String KEY_WIIBIND_GUITAR_STRUM_DOWN = "GuitarStrumDown_";
+	public static final String KEY_WIIBIND_GUITAR_MINUS = "GuitarMinus_";
+	public static final String KEY_WIIBIND_GUITAR_PLUS = "GuitarPlus_";
+	public static final String KEY_WIIBIND_GUITAR_STICK_UP = "GuitarUp_";
+	public static final String KEY_WIIBIND_GUITAR_STICK_DOWN = "GuitarDown_";
+	public static final String KEY_WIIBIND_GUITAR_STICK_LEFT = "GuitarLeft_";
+	public static final String KEY_WIIBIND_GUITAR_STICK_RIGHT = "GuitarRight_";
+	public static final String KEY_WIIBIND_GUITAR_WHAMMY_BAR = "GuitarWhammy_";
+	public static final String KEY_WIIBIND_DRUMS_PAD_RED = "DrumsRed_";
+	public static final String KEY_WIIBIND_DRUMS_PAD_YELLOW = "DrumsYellow_";
+	public static final String KEY_WIIBIND_DRUMS_PAD_BLUE = "DrumsBlue_";
+	public static final String KEY_WIIBIND_DRUMS_PAD_GREEN = "DrumsGreen_";
+	public static final String KEY_WIIBIND_DRUMS_PAD_ORANGE = "DrumsOrange_";
+	public static final String KEY_WIIBIND_DRUMS_PAD_BASS = "DrumsBass_";
+	public static final String KEY_WIIBIND_DRUMS_MINUS = "DrumsMinus_";
+	public static final String KEY_WIIBIND_DRUMS_PLUS = "DrumsPlus_";
+	public static final String KEY_WIIBIND_DRUMS_STICK_UP = "DrumsUp_";
+	public static final String KEY_WIIBIND_DRUMS_STICK_DOWN = "DrumsDown_";
+	public static final String KEY_WIIBIND_DRUMS_STICK_LEFT = "DrumsLeft_";
+	public static final String KEY_WIIBIND_DRUMS_STICK_RIGHT = "DrumsRight_";
+	public static final String KEY_WIIBIND_TURNTABLE_GREEN_LEFT = "TurntableGreenLeft_";
+	public static final String KEY_WIIBIND_TURNTABLE_RED_LEFT = "TurntableRedLeft_";
+	public static final String KEY_WIIBIND_TURNTABLE_BLUE_LEFT = "TurntableBlueLeft_";
+	public static final String KEY_WIIBIND_TURNTABLE_GREEN_RIGHT = "TurntableGreenRight_";
+	public static final String KEY_WIIBIND_TURNTABLE_RED_RIGHT = "TurntableRedRight_";
+	public static final String KEY_WIIBIND_TURNTABLE_BLUE_RIGHT = "TurntableBlueRight_";
+	public static final String KEY_WIIBIND_TURNTABLE_MINUS = "TurntableMinus_";
+	public static final String KEY_WIIBIND_TURNTABLE_PLUS = "TurntablePlus_";
+	public static final String KEY_WIIBIND_TURNTABLE_EUPHORIA = "TurntableEuphoria_";
+	public static final String KEY_WIIBIND_TURNTABLE_LEFT_LEFT = "TurntableLeftLeft_";
+	public static final String KEY_WIIBIND_TURNTABLE_LEFT_RIGHT = "TurntableLeftRight_";
+	public static final String KEY_WIIBIND_TURNTABLE_RIGHT_LEFT = "TurntableRightLeft_";
+	public static final String KEY_WIIBIND_TURNTABLE_RIGHT_RIGHT = "TurntableRightRight_";
+	public static final String KEY_WIIBIND_TURNTABLE_STICK_UP = "TurntableUp_";
+	public static final String KEY_WIIBIND_TURNTABLE_STICK_DOWN = "TurntableDown_";
+	public static final String KEY_WIIBIND_TURNTABLE_STICK_LEFT = "TurntableLeft_";
+	public static final String KEY_WIIBIND_TURNTABLE_STICK_RIGHT = "TurntableRight_";
+	public static final String KEY_WIIBIND_TURNTABLE_EFFECT_DIAL = "TurntableEffDial_";
+	public static final String KEY_WIIBIND_TURNTABLE_CROSSFADE_LEFT = "TurntableCrossLeft_";
+	public static final String KEY_WIIBIND_TURNTABLE_CROSSFADE_RIGHT = "TurntableCrossRight_";
 
 	public static final String KEY_WIIMOTE_SCAN = "WiimoteContinuousScanning";
 	public static final String KEY_WIIMOTE_SPEAKER = "WiimoteEnableSpeaker";
@@ -104,7 +284,7 @@ public final class SettingsFile
 	 */
 	public static HashMap<String, SettingSection> readFile(final String fileName, SettingsActivityView view)
 	{
-		HashMap<String, SettingSection> sections = new HashMap<>();
+		HashMap<String, SettingSection> sections = new SettingsSectionMap();
 
 		File ini = getSettingsFile(fileName);
 
@@ -122,10 +302,13 @@ public final class SettingsFile
 					current = sectionFromLine(line);
 					sections.put(current.getName(), current);
 				}
-				else if ((current != null) && line.contains("="))
+				else if ((current != null))
 				{
 					Setting setting = settingFromLine(current, line, fileName);
-					current.putSetting(setting);
+					if (setting != null)
+					{
+						current.putSetting(setting);
+					}
 				}
 			}
 		}
@@ -176,8 +359,9 @@ public final class SettingsFile
 			writer = new PrintWriter(ini, "UTF-8");
 
 			Set<String> keySet = sections.keySet();
+			Set<String> sortedKeySet = new TreeSet<>(keySet);
 
-			for (String key : keySet)
+			for (String key : sortedKeySet)
 			{
 				SettingSection section = sections.get(key);
 				writeSection(writer, section);
@@ -227,6 +411,12 @@ public final class SettingsFile
 	private static Setting settingFromLine(SettingSection current, String line, String fileName)
 	{
 		String[] splitLine = line.split("=");
+
+		if (splitLine.length != 2)
+		{
+			Log.warning("Skipping invalid config line \"" + line + "\"");
+			return null;
+		}
 
 		String key = splitLine[0].trim();
 		String value = splitLine[1].trim();
@@ -291,8 +481,9 @@ public final class SettingsFile
 		// Write this section's values.
 		HashMap<String, Setting> settings = section.getSettings();
 		Set<String> keySet = settings.keySet();
+		Set<String> sortedKeySet = new TreeSet<>(keySet);
 
-		for (String key : keySet)
+		for (String key : sortedKeySet)
 		{
 			Setting setting = settings.get(key);
 			String settingString = settingAsString(setting);

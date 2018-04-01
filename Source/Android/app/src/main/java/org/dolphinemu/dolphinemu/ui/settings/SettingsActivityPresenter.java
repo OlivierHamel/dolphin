@@ -2,7 +2,6 @@ package org.dolphinemu.dolphinemu.ui.settings;
 
 import android.os.Bundle;
 
-import org.dolphinemu.dolphinemu.BuildConfig;
 import org.dolphinemu.dolphinemu.R;
 import org.dolphinemu.dolphinemu.model.settings.SettingSection;
 import org.dolphinemu.dolphinemu.utils.Log;
@@ -13,7 +12,7 @@ import java.util.HashMap;
 
 public final class SettingsActivityPresenter
 {
-	private static final String SHOULD_SAVE = BuildConfig.APPLICATION_ID + ".should_save";
+	private static final String KEY_SHOULD_SAVE = "should_save";
 
 	private SettingsActivityView mView;
 
@@ -41,7 +40,7 @@ public final class SettingsActivityPresenter
 		}
 		else
 		{
-			mShouldSave = savedInstanceState.getBoolean(SHOULD_SAVE);
+			mShouldSave = savedInstanceState.getBoolean(KEY_SHOULD_SAVE);
 		}
 	}
 
@@ -89,8 +88,7 @@ public final class SettingsActivityPresenter
 	{
 		switch (itemId)
 		{
-			case R.id.menu_exit_no_save:
-				mShouldSave = false;
+			case R.id.menu_save_exit:
 				mView.finish();
 				return true;
 		}
@@ -105,20 +103,14 @@ public final class SettingsActivityPresenter
 
 	public void saveState(Bundle outState)
 	{
-		outState.putBoolean(SHOULD_SAVE, mShouldSave);
+		outState.putBoolean(KEY_SHOULD_SAVE, mShouldSave);
 	}
 
 	public void onGcPadSettingChanged(String key, int value)
 	{
-		switch (value)
+		if (value != 0) // Not disabled
 		{
-			case 6:
-				mView.showToastMessage("Configuration coming soon. Settings from old versions will still work.");
-				break;
-
-			case 12:
-				mView.showSettingsFragment(key, true);
-				break;
+			mView.showSettingsFragment(key + (value / 6), true);
 		}
 	}
 
@@ -127,12 +119,20 @@ public final class SettingsActivityPresenter
 		switch (value)
 		{
 			case 1:
-				mView.showToastMessage("Configuration coming soon. Settings from old versions will still work.");
+				mView.showSettingsFragment(section, true);
 				break;
 
 			case 2:
 				mView.showToastMessage("Please make sure Continuous Scanning is enabled in Core Settings.");
 				break;
+		}
+	}
+
+	public void onExtensionSettingChanged(String key, int value)
+	{
+		if (value != 0) // None
+		{
+			mView.showSettingsFragment(key + value, true);
 		}
 	}
 }

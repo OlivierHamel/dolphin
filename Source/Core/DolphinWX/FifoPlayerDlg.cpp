@@ -2,6 +2,8 @@
 // Licensed under GPLv2+
 // Refer to the license.txt file included.
 
+#include "DolphinWX/FifoPlayerDlg.h"
+
 #include <algorithm>
 #include <cstddef>
 #include <mutex>
@@ -28,11 +30,11 @@
 
 #include "Common/Assert.h"
 #include "Common/CommonTypes.h"
+#include "Common/Swap.h"
 #include "Core/FifoPlayer/FifoDataFile.h"
 #include "Core/FifoPlayer/FifoPlaybackAnalyzer.h"
 #include "Core/FifoPlayer/FifoPlayer.h"
 #include "Core/FifoPlayer/FifoRecorder.h"
-#include "DolphinWX/FifoPlayerDlg.h"
 #include "DolphinWX/WxUtils.h"
 #include "VideoCommon/BPMemory.h"
 #include "VideoCommon/OpcodeDecoding.h"
@@ -48,9 +50,10 @@ FifoPlayerDlg::FifoPlayerDlg(wxWindow* const parent)
 {
   CreateGUIControls();
 
-  sMutex.lock();
-  m_EvtHandler = GetEventHandler();
-  sMutex.unlock();
+  {
+    std::lock_guard<std::recursive_mutex> lock{sMutex};
+    m_EvtHandler = GetEventHandler();
+  }
 
   FifoPlayer::GetInstance().SetFileLoadedCallback(FileLoaded);
   FifoPlayer::GetInstance().SetFrameWrittenCallback(FrameWritten);
@@ -60,9 +63,8 @@ FifoPlayerDlg::~FifoPlayerDlg()
 {
   FifoPlayer::GetInstance().SetFrameWrittenCallback(nullptr);
 
-  sMutex.lock();
+  std::lock_guard<std::recursive_mutex> lock{sMutex};
   m_EvtHandler = nullptr;
-  sMutex.unlock();
 }
 
 void FifoPlayerDlg::CreateGUIControls()
@@ -163,7 +165,7 @@ void FifoPlayerDlg::CreateGUIControls()
     m_Save = new wxButton(m_RecordPage, wxID_ANY, _("Save"));
 
     // Recording Options
-    m_FramesToRecordLabel = new wxStaticText(m_RecordPage, wxID_ANY, _("Frames To Record"));
+    m_FramesToRecordLabel = new wxStaticText(m_RecordPage, wxID_ANY, _("Frames to Record"));
     m_FramesToRecordCtrl =
         new wxSpinCtrl(m_RecordPage, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize,
                        wxSP_ARROW_KEYS, 0, 10000, m_FramesToRecord);
@@ -222,7 +224,7 @@ void FifoPlayerDlg::CreateGUIControls()
 
     // Search box
     wxStaticText* search_label =
-        new wxStaticText(m_AnalyzePage, wxID_ANY, _("Search for hex Value:"));
+        new wxStaticText(m_AnalyzePage, wxID_ANY, _("Search for Hex Value:"));
     // TODO: ugh, wxValidator sucks - but we should use it anyway.
     m_searchField = new wxTextCtrl(m_AnalyzePage, wxID_ANY, wxEmptyString, wxDefaultPosition,
                                    wxDefaultSize, wxTE_PROCESS_ENTER);
@@ -230,8 +232,8 @@ void FifoPlayerDlg::CreateGUIControls()
 
     // Search buttons
     m_beginSearch = new wxButton(m_AnalyzePage, wxID_ANY, _("Search"));
-    m_findNext = new wxButton(m_AnalyzePage, wxID_ANY, _("Find next"));
-    m_findPrevious = new wxButton(m_AnalyzePage, wxID_ANY, _("Find previous"));
+    m_findNext = new wxButton(m_AnalyzePage, wxID_ANY, _("Find Next"));
+    m_findPrevious = new wxButton(m_AnalyzePage, wxID_ANY, _("Find Previous"));
 
     ResetSearch();
 
@@ -259,7 +261,7 @@ void FifoPlayerDlg::CreateGUIControls()
     sSearchButtons->Add(m_findPrevious, 0, wxLEFT, space5);
 
     wxStaticBoxSizer* sSearchSizer =
-        new wxStaticBoxSizer(wxVERTICAL, m_AnalyzePage, _("Search current Object"));
+        new wxStaticBoxSizer(wxVERTICAL, m_AnalyzePage, _("Search Current Object"));
     sSearchSizer->Add(sSearchField, 0, wxEXPAND | wxLEFT | wxRIGHT, space5);
     sSearchSizer->AddSpacer(space5);
     sSearchSizer->Add(sSearchButtons, 0, wxEXPAND | wxLEFT | wxRIGHT, space5);
@@ -673,7 +675,7 @@ void FifoPlayerDlg::OnObjectListSelectionChanged(wxCommandEvent& event)
         int command = *objectdata++;
         switch (command)
         {
-        case GX_NOP:
+        case OpcodeDecoder::GX_NOP:
           newLabel = "NOP";
           break;
 
@@ -681,11 +683,11 @@ void FifoPlayerDlg::OnObjectListSelectionChanged(wxCommandEvent& event)
           newLabel = "0x44";
           break;
 
-        case GX_CMD_INVL_VC:
+        case OpcodeDecoder::GX_CMD_INVL_VC:
           newLabel = "GX_CMD_INVL_VC";
           break;
 
-        case GX_LOAD_CP_REG:
+        case OpcodeDecoder::GX_LOAD_CP_REG:
         {
           u32 cmd2 = *objectdata++;
           u32 value = Common::swap32(objectdata);
@@ -695,7 +697,7 @@ void FifoPlayerDlg::OnObjectListSelectionChanged(wxCommandEvent& event)
         }
         break;
 
-        case GX_LOAD_XF_REG:
+        case OpcodeDecoder::GX_LOAD_XF_REG:
         {
           u32 cmd2 = Common::swap32(objectdata);
           objectdata += 4;
@@ -716,19 +718,22 @@ void FifoPlayerDlg::OnObjectListSelectionChanged(wxCommandEvent& event)
         }
         break;
 
-        case GX_LOAD_INDX_A:
-        case GX_LOAD_INDX_B:
-        case GX_LOAD_INDX_C:
-        case GX_LOAD_INDX_D:
+        case OpcodeDecoder::GX_LOAD_INDX_A:
+        case OpcodeDecoder::GX_LOAD_INDX_B:
+        case OpcodeDecoder::GX_LOAD_INDX_C:
+        case OpcodeDecoder::GX_LOAD_INDX_D:
+        {
           objectdata += 4;
-          newLabel = wxString::Format("LOAD INDX %s", (command == GX_LOAD_INDX_A) ?
-                                                          "A" :
-                                                          (command == GX_LOAD_INDX_B) ?
-                                                          "B" :
-                                                          (command == GX_LOAD_INDX_C) ? "C" : "D");
-          break;
+          newLabel = wxString::Format("LOAD INDX %s",
+                                      (command == OpcodeDecoder::GX_LOAD_INDX_A) ?
+                                          "A" :
+                                          (command == OpcodeDecoder::GX_LOAD_INDX_B) ?
+                                          "B" :
+                                          (command == OpcodeDecoder::GX_LOAD_INDX_C) ? "C" : "D");
+        }
+        break;
 
-        case GX_CMD_CALL_DL:
+        case OpcodeDecoder::GX_CMD_CALL_DL:
           // The recorder should have expanded display lists into the fifo stream and skipped the
           // call to start them
           // That is done to make it easier to track where memory is updated
@@ -737,7 +742,7 @@ void FifoPlayerDlg::OnObjectListSelectionChanged(wxCommandEvent& event)
           newLabel = wxString::Format("CALL DL");
           break;
 
-        case GX_LOAD_BP_REG:
+        case OpcodeDecoder::GX_LOAD_BP_REG:
         {
           u32 cmd2 = Common::swap32(objectdata);
           objectdata += 4;
@@ -782,7 +787,7 @@ void FifoPlayerDlg::OnObjectCmdListSelectionChanged(wxCommandEvent& event)
 
   // TODO: Not sure whether we should bother translating the descriptions
   wxString newLabel;
-  if (*cmddata == GX_LOAD_BP_REG)
+  if (*cmddata == OpcodeDecoder::GX_LOAD_BP_REG)
   {
     std::string name;
     std::string desc;
@@ -798,11 +803,11 @@ void FifoPlayerDlg::OnObjectCmdListSelectionChanged(wxCommandEvent& event)
     else
       newLabel += StrToWxStr(desc);
   }
-  else if (*cmddata == GX_LOAD_CP_REG)
+  else if (*cmddata == OpcodeDecoder::GX_LOAD_CP_REG)
   {
     newLabel = _("CP register ");
   }
-  else if (*cmddata == GX_LOAD_XF_REG)
+  else if (*cmddata == OpcodeDecoder::GX_LOAD_XF_REG)
   {
     newLabel = _("XF register ");
   }
@@ -973,39 +978,33 @@ bool FifoPlayerDlg::GetSaveButtonEnabled() const
 
 void FifoPlayerDlg::RecordingFinished()
 {
-  sMutex.lock();
+  std::lock_guard<std::recursive_mutex> lock{sMutex};
 
   if (m_EvtHandler)
   {
     wxCommandEvent event(RECORDING_FINISHED_EVENT);
     m_EvtHandler->AddPendingEvent(event);
   }
-
-  sMutex.unlock();
 }
 
 void FifoPlayerDlg::FileLoaded()
 {
-  sMutex.lock();
+  std::lock_guard<std::recursive_mutex> lock{sMutex};
 
   if (m_EvtHandler)
   {
     wxPaintEvent event;
     m_EvtHandler->AddPendingEvent(event);
   }
-
-  sMutex.unlock();
 }
 
 void FifoPlayerDlg::FrameWritten()
 {
-  sMutex.lock();
+  std::lock_guard<std::recursive_mutex> lock{sMutex};
 
   if (m_EvtHandler)
   {
     wxCommandEvent event(FRAME_WRITTEN_EVENT);
     m_EvtHandler->AddPendingEvent(event);
   }
-
-  sMutex.unlock();
 }

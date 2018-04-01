@@ -26,8 +26,9 @@ enum ViewportType
 extern enum ViewportType g_viewport_type, g_old_viewport_type;
 
 class PointerWrap;
+struct ProjectionHackConfig;
 
-void UpdateProjectionHack(int iParams[], std::string sParams[]);
+void UpdateProjectionHack(const ProjectionHackConfig& config);
 
 // The non-API dependent parts.
 class VertexShaderManager
@@ -56,6 +57,10 @@ public:
   static void RotateView(float x, float y);
   static void ScaleView(float scale);
   static void ResetView();
+
+  static void SetVertexFormat(u32 components);
+  static void SetTexMatrixInfoChanged(int index);
+  static void SetLightingConfigChanged();
 
   // data: 3 floats representing the X, Y and Z vertex model coordinates and the posmatrix index.
   // out:  4 floats which will be initialized with the corresponding clip space coordinates

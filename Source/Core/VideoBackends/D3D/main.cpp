@@ -6,9 +6,8 @@
 #include <string>
 
 #include "Common/CommonTypes.h"
+#include "Common/MsgHandler.h"
 #include "Common/StringUtil.h"
-
-#include "Core/ConfigManager.h"
 
 #include "VideoBackends/D3D/BoundingBox.h"
 #include "VideoBackends/D3D/D3DBase.h"
@@ -62,11 +61,13 @@ void VideoBackend::InitBackendInfo()
   }
 
   g_Config.backend_info.api_type = APIType::D3D;
+  g_Config.backend_info.MaxTextureSize = D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION;
   g_Config.backend_info.bSupportsExclusiveFullscreen = true;
   g_Config.backend_info.bSupportsDualSourceBlend = true;
   g_Config.backend_info.bSupportsPrimitiveRestart = true;
   g_Config.backend_info.bSupportsOversizedViewports = false;
   g_Config.backend_info.bSupportsGeometryShaders = true;
+  g_Config.backend_info.bSupportsComputeShaders = false;
   g_Config.backend_info.bSupports3DVision = true;
   g_Config.backend_info.bSupportsPostProcessing = false;
   g_Config.backend_info.bSupportsPaletteConversion = true;
@@ -74,14 +75,20 @@ void VideoBackend::InitBackendInfo()
   g_Config.backend_info.bSupportsDepthClamp = true;
   g_Config.backend_info.bSupportsReversedDepthRange = false;
   g_Config.backend_info.bSupportsMultithreading = false;
+  g_Config.backend_info.bSupportsInternalResolutionFrameDumps = false;
+  g_Config.backend_info.bSupportsGPUTextureDecoding = false;
+  g_Config.backend_info.bSupportsST3CTextures = false;
+  g_Config.backend_info.bSupportsBitfield = false;
+  g_Config.backend_info.bSupportsDynamicSamplerIndexing = false;
+  g_Config.backend_info.bSupportsBPTCTextures = false;
 
-  IDXGIFactory* factory;
+  IDXGIFactory* factory = nullptr;
   IDXGIAdapter* ad;
-// Oculus SDK Bug: Once OpenGL mode has been attached in Direct Mode,
-// running the next line will cause a crash in Oculus SDK.  Seems to work
-// If you never VR_Shutdown() the OpenGL mode, and never VR_Init() for the
-// Direct3D mode, but that is very hacky.  Running ovr_Initialize(); here stops
-// crash, bug kills Direct Mode. Wait until SDK fixes this issue?
+  // Oculus SDK Bug: Once OpenGL mode has been attached in Direct Mode,
+  // running the next line will cause a crash in Oculus SDK.  Seems to work
+  // If you never VR_Shutdown() the OpenGL mode, and never VR_Init() for the
+  // Direct3D mode, but that is very hacky.  Running ovr_Initialize(); here stops
+  // crash, bug kills Direct Mode. Wait until SDK fixes this issue?
   if (g_vr_needs_DXGIFactory1)
   {
     if (DX11::PCreateDXGIFactory1)
@@ -110,7 +117,6 @@ void VideoBackend::InitBackendInfo()
     // TODO: These don't get updated on adapter change, yet
     if (adapter_index == g_Config.iAdapter)
     {
-      std::string samples;
       std::vector<DXGI_SAMPLE_DESC> modes = DX11::D3D::EnumAAModes(ad);
       // First iteration will be 1. This equals no AA.
       for (unsigned int i = 0; i < modes.size(); ++i)
@@ -118,13 +124,16 @@ void VideoBackend::InitBackendInfo()
         g_Config.backend_info.AAModes.push_back(modes[i].Count);
       }
 
-      bool shader_model_5_supported = (DX11::D3D::GetFeatureLevel(ad) >= D3D_FEATURE_LEVEL_11_0);
+      D3D_FEATURE_LEVEL feature_level = D3D::GetFeatureLevel(ad);
+      bool shader_model_5_supported = feature_level >= D3D_FEATURE_LEVEL_11_0;
+      g_Config.backend_info.MaxTextureSize = D3D::GetMaxTextureSize(feature_level);
 
       // Requires the earlydepthstencil attribute (only available in shader model 5)
       g_Config.backend_info.bSupportsEarlyZ = shader_model_5_supported;
 
       // Requires full UAV functionality (only available in shader model 5)
-      g_Config.backend_info.bSupportsBBox = shader_model_5_supported;
+      g_Config.backend_info.bSupportsBBox =
+          g_Config.backend_info.bSupportsFragmentStoresAndAtomics = shader_model_5_supported;
 
       // Requires the instance attribute (only available in shader model 5)
       g_Config.backend_info.bSupportsGSInstancing = shader_model_5_supported;
@@ -136,10 +145,6 @@ void VideoBackend::InitBackendInfo()
     ad->Release();
   }
   factory->Release();
-
-  // Clear ppshaders string vector
-  g_Config.backend_info.PPShaders.clear();
-  g_Config.backend_info.AnaglyphShaders.clear();
 
   DX11::D3D::UnloadDXGI();
   DX11::D3D::UnloadD3D();
@@ -166,14 +171,18 @@ bool VideoBackend::InitializeOtherThread(void* window_handle, std::thread* video
 
 void VideoBackend::Video_Prepare()
 {
+  if (FAILED(D3D::Create(reinterpret_cast<HWND>(m_window_handle))))
+    PanicAlert("Failed to create D3D device.");
+
   // internal interfaces
-  g_renderer = std::make_unique<Renderer>(m_window_handle);
+  g_renderer = std::make_unique<Renderer>();
   g_texture_cache = std::make_unique<TextureCache>();
   g_vertex_manager = std::make_unique<VertexManager>();
   g_perf_query = std::make_unique<PerfQuery>();
   VertexShaderCache::Init();
   PixelShaderCache::Init();
   GeometryShaderCache::Init();
+  VertexShaderCache::WaitForBackgroundCompilesToComplete();
   D3D::InitUtils();
   BBox::Init();
 }

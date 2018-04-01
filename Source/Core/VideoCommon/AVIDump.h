@@ -9,8 +9,8 @@
 class AVIDump
 {
 private:
-  static bool CreateFile();
-  static void CloseFile();
+  static bool CreateVideoFile();
+  static void CloseVideoFile();
   static void CheckResolution(int width, int height);
 
 public:
@@ -27,7 +27,7 @@ public:
   static void Stop();
   static void DoState();
 
-#if defined(HAVE_LIBAV)
+#if defined(HAVE_FFMPEG)
   static Frame FetchState(u64 ticks);
 #else
   static Frame FetchState(u64 ticks) { return {}; }

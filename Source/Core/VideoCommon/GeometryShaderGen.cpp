@@ -2,76 +2,85 @@
 // Licensed under GPLv2+
 // Refer to the license.txt file included.
 
+#include "VideoCommon/GeometryShaderGen.h"
+
 #include <cmath>
 #include <cstring>
 
 #include "Common/CommonTypes.h"
-#include "VideoCommon/BPMemory.h"
 #include "VideoCommon/DriverDetails.h"
-#include "VideoCommon/GeometryShaderGen.h"
 #include "VideoCommon/LightingShaderGen.h"
 #include "VideoCommon/VideoCommon.h"
 #include "VideoCommon/VideoConfig.h"
+#include "VideoCommon/XFMemory.h"
 
-static const char* primitives_ogl[] = {"points", "lines", "triangles"};
+constexpr std::array<const char*, 4> primitives_ogl = {
+    {"points", "lines", "triangles", "triangles"}};
+constexpr std::array<const char*, 4> primitives_d3d = {{"point", "line", "triangle", "triangle"}};
 
-static const char* primitives_d3d[] = {"point", "line", "triangle"};
+bool geometry_shader_uid_data::IsPassthrough() const
+{
+  const bool stereo = g_ActiveConfig.iStereoMode > 0;
+  const bool wireframe = g_ActiveConfig.bWireFrame;
+  return primitive_type >= static_cast<u32>(PrimitiveType::Triangles) && !stereo && !wireframe;
+}
 
-template <class T>
-static void EmitVertex(T& out, const char* vertex, APIType ApiType, bool first_vertex = false);
-template <class T>
-static void EndPrimitive(T& out, APIType ApiType);
-
-GeometryShaderUid GetGeometryShaderUid(u32 primitive_type)
+GeometryShaderUid GetGeometryShaderUid(PrimitiveType primitive_type)
 {
   ShaderUid<geometry_shader_uid_data> out;
   geometry_shader_uid_data* uid_data = out.GetUidData<geometry_shader_uid_data>();
   memset(uid_data, 0, sizeof(geometry_shader_uid_data));
 
-  uid_data->primitive_type = primitive_type;
-  uid_data->wireframe = g_ActiveConfig.bWireFrame;
-  uid_data->msaa = g_ActiveConfig.iMultisamples > 1;
-  uid_data->ssaa = g_ActiveConfig.iMultisamples > 1 && g_ActiveConfig.bSSAA;
-  uid_data->stereo = g_ActiveConfig.iStereoMode > 0;
-  uid_data->vr = g_ActiveConfig.iStereoMode >= STEREO_OCULUS;
+  uid_data->primitive_type = static_cast<u32>(primitive_type);
   uid_data->numTexGens = xfmem.numTexGen.numTexGens;
-  uid_data->pixel_lighting = g_ActiveConfig.bEnablePixelLighting;
 
   return out;
 }
 
-static void EmitVertex(ShaderCode& out, const geometry_shader_uid_data* uid_data,
-                       const char* vertex, APIType ApiType, bool first_vertex = false);
-static void EndPrimitive(ShaderCode& out, const geometry_shader_uid_data* uid_data,
-                         APIType ApiType);
+static void EmitVertex(ShaderCode& out, const ShaderHostConfig& host_config,
+                       const geometry_shader_uid_data* uid_data, const char* vertex,
+                       APIType ApiType, bool wireframe, bool pixel_lighting,
+                       bool first_vertex = false);
+static void EndPrimitive(ShaderCode& out, const ShaderHostConfig& host_config,
+                         const geometry_shader_uid_data* uid_data, APIType ApiType, bool wireframe,
+                         bool pixel_lighting);
 
-ShaderCode GenerateGeometryShaderCode(APIType ApiType, const geometry_shader_uid_data* uid_data)
+ShaderCode GenerateGeometryShaderCode(APIType ApiType, const ShaderHostConfig& host_config,
+                                      const geometry_shader_uid_data* uid_data)
 {
   ShaderCode out;
   // Non-uid template parameters will write to the dummy data (=> gets optimized out)
 
-  const unsigned int vertex_in = uid_data->primitive_type + 1;
-  unsigned int vertex_out = uid_data->primitive_type == PRIMITIVE_TRIANGLES ? 3 : 4;
+  const bool wireframe = host_config.wireframe;
+  const bool pixel_lighting = g_ActiveConfig.bEnablePixelLighting;
+  const bool msaa = host_config.msaa;
+  const bool ssaa = host_config.ssaa;
+  const bool stereo = host_config.stereo;
+  const PrimitiveType primitive_type = static_cast<PrimitiveType>(uid_data->primitive_type);
+  const unsigned primitive_type_index = static_cast<unsigned>(uid_data->primitive_type);
+  const unsigned vertex_in = std::min(static_cast<unsigned>(primitive_type_index) + 1, 3u);
+  unsigned vertex_out = primitive_type == PrimitiveType::TriangleStrip ? 3 : 4;
 
-  if (uid_data->wireframe)
+  const unsigned int layers = host_config.more_layers * 2 + (int)(stereo) + 1;
+
+  if (wireframe)
     vertex_out++;
 
   if (ApiType == APIType::OpenGL || ApiType == APIType::Vulkan)
   {
     // Insert layout parameters
-    if (g_ActiveConfig.backend_info.bSupportsGSInstancing)
+    if (host_config.backend_gs_instancing)
     {
-      out.Write("layout(%s, invocations = %d) in;\n", primitives_ogl[uid_data->primitive_type],
-                uid_data->stereo ? 2 : 1);
-      out.Write("layout(%s_strip, max_vertices = %d) out;\n",
-                uid_data->wireframe ? "line" : "triangle", vertex_out);
+      out.Write("layout(%s, invocations = %d) in;\n", primitives_ogl[primitive_type_index],
+                layers);
+      out.Write("layout(%s_strip, max_vertices = %d) out;\n", wireframe ? "line" : "triangle",
+                vertex_out);
     }
     else
     {
-      out.Write("layout(%s) in;\n", primitives_ogl[uid_data->primitive_type]);
-      out.Write("layout(%s_strip, max_vertices = %d) out;\n",
-                uid_data->wireframe ? "line" : "triangle",
-                uid_data->stereo ? vertex_out * 2 : vertex_out);
+      out.Write("layout(%s) in;\n", primitives_ogl[primitive_type_index]);
+      out.Write("layout(%s_strip, max_vertices = %d) out;\n", wireframe ? "line" : "triangle",
+                vertex_out * layers);
     }
   }
 
@@ -89,27 +98,24 @@ ShaderCode GenerateGeometryShaderCode(APIType ApiType, const geometry_shader_uid
             "};\n");
 
   out.Write("struct VS_OUTPUT {\n");
-  GenerateVSOutputMembers<ShaderCode>(out, ApiType, uid_data->numTexGens, uid_data->pixel_lighting,
-                                      "");
+  GenerateVSOutputMembers<ShaderCode>(out, ApiType, uid_data->numTexGens, pixel_lighting, "");
   out.Write("};\n");
 
   if (ApiType == APIType::OpenGL || ApiType == APIType::Vulkan)
   {
-    if (g_ActiveConfig.backend_info.bSupportsGSInstancing)
+    if (host_config.backend_gs_instancing)
       out.Write("#define InstanceID gl_InvocationID\n");
 
     out.Write("VARYING_LOCATION(0) in VertexData {\n");
-    GenerateVSOutputMembers<ShaderCode>(
-        out, ApiType, uid_data->numTexGens, uid_data->pixel_lighting,
-        GetInterpolationQualifier(uid_data->msaa, uid_data->ssaa, true, true));
+    GenerateVSOutputMembers<ShaderCode>(out, ApiType, uid_data->numTexGens, pixel_lighting,
+                                        GetInterpolationQualifier(msaa, ssaa, true, true));
     out.Write("} vs[%d];\n", vertex_in);
 
     out.Write("VARYING_LOCATION(0) out VertexData {\n");
-    GenerateVSOutputMembers<ShaderCode>(
-        out, ApiType, uid_data->numTexGens, uid_data->pixel_lighting,
-        GetInterpolationQualifier(uid_data->msaa, uid_data->ssaa, true, false));
+    GenerateVSOutputMembers<ShaderCode>(out, ApiType, uid_data->numTexGens, pixel_lighting,
+                                        GetInterpolationQualifier(msaa, ssaa, true, false));
 
-    if (uid_data->stereo)
+    if (stereo || host_config.more_layers)
       out.Write("\tflat int layer;\n");
 
     out.Write("} ps;\n");
@@ -121,37 +127,35 @@ ShaderCode GenerateGeometryShaderCode(APIType ApiType, const geometry_shader_uid
     out.Write("struct VertexData {\n");
     out.Write("\tVS_OUTPUT o;\n");
 
-    if (uid_data->stereo)
+    if (stereo || host_config.more_layers)
       out.Write("\tuint layer : SV_RenderTargetArrayIndex;\n");
 
     out.Write("};\n");
 
-    if (g_ActiveConfig.backend_info.bSupportsGSInstancing)
+    if (host_config.backend_gs_instancing)
     {
-      out.Write("[maxvertexcount(%d)]\n[instance(%d)]\n", vertex_out, uid_data->stereo ? 2 : 1);
+      out.Write("[maxvertexcount(%d)]\n[instance(%d)]\n", vertex_out, layers);
       out.Write("void main(%s VS_OUTPUT o[%d], inout %sStream<VertexData> output, in uint "
                 "InstanceID : SV_GSInstanceID)\n{\n",
-                primitives_d3d[uid_data->primitive_type], vertex_in,
-                uid_data->wireframe ? "Line" : "Triangle");
+                primitives_d3d[primitive_type_index], vertex_in, wireframe ? "Line" : "Triangle");
     }
     else
     {
-      out.Write("[maxvertexcount(%d)]\n", uid_data->stereo ? vertex_out * 2 : vertex_out);
+      out.Write("[maxvertexcount(%d)]\n", vertex_out * layers);
       out.Write("void main(%s VS_OUTPUT o[%d], inout %sStream<VertexData> output)\n{\n",
-                primitives_d3d[uid_data->primitive_type], vertex_in,
-                uid_data->wireframe ? "Line" : "Triangle");
+                primitives_d3d[primitive_type_index], vertex_in, wireframe ? "Line" : "Triangle");
     }
 
     out.Write("\tVertexData ps;\n");
   }
 
-  if (uid_data->primitive_type == PRIMITIVE_LINES)
+  if (primitive_type == PrimitiveType::Lines)
   {
     if (ApiType == APIType::OpenGL || ApiType == APIType::Vulkan)
     {
       out.Write("\tVS_OUTPUT start, end;\n");
-      AssignVSOutputMembers(out, "start", "vs[0]", uid_data->numTexGens, uid_data->pixel_lighting);
-      AssignVSOutputMembers(out, "end", "vs[1]", uid_data->numTexGens, uid_data->pixel_lighting);
+      AssignVSOutputMembers(out, "start", "vs[0]", uid_data->numTexGens, pixel_lighting);
+      AssignVSOutputMembers(out, "end", "vs[1]", uid_data->numTexGens, pixel_lighting);
     }
     else
     {
@@ -176,12 +180,12 @@ ShaderCode GenerateGeometryShaderCode(APIType ApiType, const geometry_shader_uid
               "\t\toffset = float2(0, -" I_LINEPTPARAMS ".z / " I_LINEPTPARAMS ".y);\n"
               "\t}\n");
   }
-  else if (uid_data->primitive_type == PRIMITIVE_POINTS)
+  else if (primitive_type == PrimitiveType::Points)
   {
     if (ApiType == APIType::OpenGL || ApiType == APIType::Vulkan)
     {
       out.Write("\tVS_OUTPUT center;\n");
-      AssignVSOutputMembers(out, "center", "vs[0]", uid_data->numTexGens, uid_data->pixel_lighting);
+      AssignVSOutputMembers(out, "center", "vs[0]", uid_data->numTexGens, pixel_lighting);
     }
     else
     {
@@ -194,17 +198,17 @@ ShaderCode GenerateGeometryShaderCode(APIType ApiType, const geometry_shader_uid
               ".x, -" I_LINEPTPARAMS ".w / " I_LINEPTPARAMS ".y) * center.pos.w;\n");
   }
 
-  if (uid_data->stereo)
+  if (stereo || host_config.more_layers)
   {
     // If the GPU supports invocation we don't need a for loop and can simply use the
     // invocation identifier to determine which layer we're rendering.
-    if (g_ActiveConfig.backend_info.bSupportsGSInstancing)
+    if (host_config.backend_gs_instancing)
       out.Write("\tint eye = InstanceID;\n");
     else
-      out.Write("\tfor (int eye = 0; eye < 2; ++eye) {\n");
+      out.Write("\tfor (int eye = 0; eye < %d; ++eye) {\n", layers);
   }
 
-  if (uid_data->wireframe)
+  if (wireframe)
     out.Write("\tVS_OUTPUT first;\n");
 
   out.Write("\tfor (int i = 0; i < %d; ++i) {\n", vertex_in);
@@ -212,9 +216,9 @@ ShaderCode GenerateGeometryShaderCode(APIType ApiType, const geometry_shader_uid
   if (ApiType == APIType::OpenGL || ApiType == APIType::Vulkan)
   {
     out.Write("\tVS_OUTPUT f;\n");
-    AssignVSOutputMembers(out, "f", "vs[i]", uid_data->numTexGens, uid_data->pixel_lighting);
+    AssignVSOutputMembers(out, "f", "vs[i]", uid_data->numTexGens, pixel_lighting);
 
-    if (g_ActiveConfig.backend_info.bSupportsDepthClamp &&
+    if (host_config.backend_depth_clamp &&
         DriverDetails::HasBug(DriverDetails::BUG_BROKEN_CLIP_DISTANCE))
     {
       // On certain GPUs we have to consume the clip distance from the vertex shader
@@ -228,7 +232,7 @@ ShaderCode GenerateGeometryShaderCode(APIType ApiType, const geometry_shader_uid
     out.Write("\tVS_OUTPUT f = o[i];\n");
   }
 
-  if (uid_data->vr)
+  if (host_config.vr)
   {
     // Select the output layer
     out.Write("\tps.layer = eye;\n");
@@ -240,7 +244,7 @@ ShaderCode GenerateGeometryShaderCode(APIType ApiType, const geometry_shader_uid
               "[eye+2] * f.clipPos.w;\n");
     out.Write("\tf.pos.x += " I_STEREOPARAMS "[eye] - " I_STEREOPARAMS "[eye+2] * f.pos.w;\n");
   }
-  else if (uid_data->stereo)
+  else if (stereo || host_config.more_layers)
   {
     // Select the output layer
     out.Write("\tps.layer = eye;\n");
@@ -258,7 +262,7 @@ ShaderCode GenerateGeometryShaderCode(APIType ApiType, const geometry_shader_uid
     out.Write("\tf.pos.x += hoffset * (f.pos.w - " I_STEREOPARAMS ".z);\n");
   }
 
-  if (uid_data->primitive_type == PRIMITIVE_LINES)
+  if (primitive_type == PrimitiveType::Lines)
   {
     out.Write("\tVS_OUTPUT l = f;\n"
               "\tVS_OUTPUT r = f;\n");
@@ -276,10 +280,10 @@ ShaderCode GenerateGeometryShaderCode(APIType ApiType, const geometry_shader_uid
     }
     out.Write("\t}\n");
 
-    EmitVertex(out, uid_data, "l", ApiType, true);
-    EmitVertex(out, uid_data, "r", ApiType);
+    EmitVertex(out, host_config, uid_data, "l", ApiType, wireframe, pixel_lighting, true);
+    EmitVertex(out, host_config, uid_data, "r", ApiType, wireframe, pixel_lighting);
   }
-  else if (uid_data->primitive_type == PRIMITIVE_POINTS)
+  else if (primitive_type == PrimitiveType::Points)
   {
     out.Write("\tVS_OUTPUT ll = f;\n"
               "\tVS_OUTPUT lr = f;\n"
@@ -298,28 +302,28 @@ ShaderCode GenerateGeometryShaderCode(APIType ApiType, const geometry_shader_uid
     for (unsigned int i = 0; i < uid_data->numTexGens; ++i)
     {
       out.Write("\tif (((" I_TEXOFFSET "[1] >> %d) & 0x1) != 0) {\n", i);
-      out.Write("\t\tll.tex%d.xy += float2(0,1) * texOffset;\n", i);
-      out.Write("\t\tlr.tex%d.xy += texOffset;\n", i);
-      out.Write("\t\tur.tex%d.xy += float2(1,0) * texOffset;\n", i);
+      out.Write("\t\tul.tex%d.xy += float2(0,1) * texOffset;\n", i);
+      out.Write("\t\tur.tex%d.xy += texOffset;\n", i);
+      out.Write("\t\tlr.tex%d.xy += float2(1,0) * texOffset;\n", i);
       out.Write("\t}\n");
     }
     out.Write("\t}\n");
 
-    EmitVertex(out, uid_data, "ll", ApiType, true);
-    EmitVertex(out, uid_data, "lr", ApiType);
-    EmitVertex(out, uid_data, "ul", ApiType);
-    EmitVertex(out, uid_data, "ur", ApiType);
+    EmitVertex(out, host_config, uid_data, "ll", ApiType, wireframe, pixel_lighting, true);
+    EmitVertex(out, host_config, uid_data, "lr", ApiType, wireframe, pixel_lighting);
+    EmitVertex(out, host_config, uid_data, "ul", ApiType, wireframe, pixel_lighting);
+    EmitVertex(out, host_config, uid_data, "ur", ApiType, wireframe, pixel_lighting);
   }
   else
   {
-    EmitVertex(out, uid_data, "f", ApiType, true);
+    EmitVertex(out, host_config, uid_data, "f", ApiType, wireframe, pixel_lighting, true);
   }
 
   out.Write("\t}\n");
 
-  EndPrimitive(out, uid_data, ApiType);
+  EndPrimitive(out, host_config, uid_data, ApiType, wireframe, pixel_lighting);
 
-  if (uid_data->stereo && !g_ActiveConfig.backend_info.bSupportsGSInstancing)
+  if ((stereo || host_config.more_layers) && !host_config.backend_gs_instancing)
     out.Write("\t}\n");
 
   out.Write("}\n");
@@ -327,28 +331,29 @@ ShaderCode GenerateGeometryShaderCode(APIType ApiType, const geometry_shader_uid
   return out;
 }
 
-static void EmitVertex(ShaderCode& out, const geometry_shader_uid_data* uid_data,
-                       const char* vertex, APIType ApiType, bool first_vertex)
+static void EmitVertex(ShaderCode& out, const ShaderHostConfig& host_config,
+                       const geometry_shader_uid_data* uid_data, const char* vertex,
+                       APIType ApiType, bool wireframe, bool pixel_lighting, bool first_vertex)
 {
-  if (uid_data->wireframe && first_vertex)
+  if (wireframe && first_vertex)
     out.Write("\tif (i == 0) first = %s;\n", vertex);
 
   if (ApiType == APIType::OpenGL)
   {
     out.Write("\tgl_Position = %s.pos;\n", vertex);
-    if (g_ActiveConfig.backend_info.bSupportsDepthClamp)
+    if (host_config.backend_depth_clamp)
     {
       out.Write("\tgl_ClipDistance[0] = %s.clipDist0;\n", vertex);
       out.Write("\tgl_ClipDistance[1] = %s.clipDist1;\n", vertex);
     }
-    AssignVSOutputMembers(out, "ps", vertex, uid_data->numTexGens, uid_data->pixel_lighting);
+    AssignVSOutputMembers(out, "ps", vertex, uid_data->numTexGens, pixel_lighting);
   }
   else if (ApiType == APIType::Vulkan)
   {
     // Vulkan NDC space has Y pointing down (right-handed NDC space).
     out.Write("\tgl_Position = %s.pos;\n", vertex);
     out.Write("\tgl_Position.y = -gl_Position.y;\n");
-    AssignVSOutputMembers(out, "ps", vertex, uid_data->numTexGens, uid_data->pixel_lighting);
+    AssignVSOutputMembers(out, "ps", vertex, uid_data->numTexGens, pixel_lighting);
   }
   else
   {
@@ -361,10 +366,12 @@ static void EmitVertex(ShaderCode& out, const geometry_shader_uid_data* uid_data
     out.Write("\toutput.Append(ps);\n");
 }
 
-static void EndPrimitive(ShaderCode& out, const geometry_shader_uid_data* uid_data, APIType ApiType)
+static void EndPrimitive(ShaderCode& out, const ShaderHostConfig& host_config,
+                         const geometry_shader_uid_data* uid_data, APIType ApiType, bool wireframe,
+                         bool pixel_lighting)
 {
-  if (uid_data->wireframe)
-    EmitVertex(out, uid_data, "first", ApiType);
+  if (wireframe)
+    EmitVertex(out, host_config, uid_data, "first", ApiType, wireframe, pixel_lighting);
 
   if (ApiType == APIType::OpenGL || ApiType == APIType::Vulkan)
     out.Write("\tEndPrimitive();\n");
@@ -372,43 +379,69 @@ static void EndPrimitive(ShaderCode& out, const geometry_shader_uid_data* uid_da
     out.Write("\toutput.RestartStrip();\n");
 }
 
+void EnumerateGeometryShaderUids(const std::function<void(const GeometryShaderUid&)>& callback)
+{
+  GeometryShaderUid uid;
+  std::memset(&uid, 0, sizeof(uid));
+
+  const std::array<PrimitiveType, 3> primitive_lut = {
+      {g_ActiveConfig.backend_info.bSupportsPrimitiveRestart ? PrimitiveType::TriangleStrip :
+                                                               PrimitiveType::Triangles,
+       PrimitiveType::Lines, PrimitiveType::Points}};
+  for (PrimitiveType primitive : primitive_lut)
+  {
+    auto* guid = uid.GetUidData<geometry_shader_uid_data>();
+    guid->primitive_type = static_cast<u32>(primitive);
+
+    for (u32 texgens = 0; texgens <= 8; texgens++)
+    {
+      guid->numTexGens = texgens;
+      callback(uid);
+    }
+  }
+}
+
 template <class T>
-static T GenerateAvatarGeometryShader(u32 primitive_type, APIType ApiType)
+static T GenerateAvatarGeometryShader(PrimitiveType primitive_type, APIType ApiType, const ShaderHostConfig& host_config)
 {
   T out;
+
+  const bool wireframe = host_config.wireframe;
+  const bool pixel_lighting = g_ActiveConfig.bEnablePixelLighting;
+  const bool stereo = host_config.stereo;
+
   // Non-uid template parameters will write to the dummy data (=> gets optimized out)
   geometry_shader_uid_data dummy_data;
   geometry_shader_uid_data* uid_data = out.template GetUidData<geometry_shader_uid_data>();
   if (uid_data == nullptr)
     uid_data = &dummy_data;
 
-  uid_data->primitive_type = primitive_type;
-  const unsigned int vertex_in = primitive_type + 1;
-  unsigned int vertex_out = primitive_type == PRIMITIVE_TRIANGLES ? 3 : 4;
+  const unsigned primitive_type_index = static_cast<unsigned>(primitive_type);
+  uid_data->primitive_type = primitive_type_index;
+  const unsigned vertex_in = std::min(static_cast<unsigned>(primitive_type_index) + 1, 3u);
+  unsigned vertex_out = primitive_type == PrimitiveType::TriangleStrip ? 3 : 4;
 
-  uid_data->wireframe = g_ActiveConfig.bWireFrame;
-  if (uid_data->wireframe)
+  const unsigned int layers = host_config.more_layers * 2 + host_config.stereo + 1;
+
+  if (wireframe)
     vertex_out++;
-
-  uid_data->vr = g_ActiveConfig.iStereoMode >= STEREO_OCULUS;
-  uid_data->stereo = g_ActiveConfig.iStereoMode > 0;
 
   if (ApiType == APIType::OpenGL)
   {
     // Insert layout parameters
-    if (g_ActiveConfig.backend_info.bSupportsGSInstancing)
+    if (host_config.backend_gs_instancing)
     {
-      out.Write("layout(%s, invocations = %d) in;\n", primitives_ogl[primitive_type],
-                uid_data->stereo > 0 ? 2 : 1);
+      out.Write("layout(%s, invocations = %d) in;\n", primitives_ogl[primitive_type_index],
+                layers);
       out.Write("layout(%s_strip, max_vertices = %d) out;\n",
-                uid_data->wireframe ? "line" : "triangle", vertex_out);
+                wireframe ? "line" : "triangle", vertex_out);
     }
     else
     {
-      out.Write("layout(%s) in;\n", primitives_ogl[primitive_type]);
+      out.Write("layout(%s) in;\n", primitives_ogl[primitive_type_index]);
       out.Write("layout(%s_strip, max_vertices = %d) out;\n",
-                uid_data->wireframe ? "line" : "triangle",
-                uid_data->stereo > 0 ? vertex_out * 2 : vertex_out);
+                wireframe ? "line" : "triangle",
+                vertex_out * layers);
     }
   }
 
@@ -424,7 +457,6 @@ static T GenerateAvatarGeometryShader(u32 primitive_type, APIType ApiType)
             "};\n");
 
   uid_data->numTexGens = 1;
-  uid_data->pixel_lighting = false;
   const char* qualifier = "";
 
   out.Write("struct VS_OUTPUT {\n");
@@ -435,7 +467,7 @@ static T GenerateAvatarGeometryShader(u32 primitive_type, APIType ApiType)
 
   if (ApiType == APIType::OpenGL)
   {
-    if (g_ActiveConfig.backend_info.bSupportsGSInstancing)
+    if (host_config.backend_gs_instancing)
       out.Write("#define InstanceID gl_InvocationID\n");
 
     out.Write("in VertexData {\n");
@@ -451,7 +483,7 @@ static T GenerateAvatarGeometryShader(u32 primitive_type, APIType ApiType)
     DefineOutputMember(out, ApiType, qualifier, "float4", "colors_", 0, "COLOR", 0);
     DefineOutputMember(out, ApiType, qualifier, "float3", "tex", 0, "TEXCOORD", 0);
 
-    if (uid_data->stereo)
+    if (stereo || host_config.more_layers)
       out.Write("\tflat int layer;\n");
 
     out.Write("} ps;\n");
@@ -463,31 +495,31 @@ static T GenerateAvatarGeometryShader(u32 primitive_type, APIType ApiType)
     out.Write("struct VertexData {\n");
     out.Write("\tVS_OUTPUT o;\n");
 
-    if (uid_data->stereo)
+    if (stereo || host_config.more_layers)
       out.Write("\tuint layer : SV_RenderTargetArrayIndex;\n");
 
     out.Write("};\n");
 
-    if (g_ActiveConfig.backend_info.bSupportsGSInstancing)
+    if (host_config.backend_gs_instancing)
     {
-      out.Write("[maxvertexcount(%d)]\n[instance(%d)]\n", vertex_out, uid_data->stereo ? 2 : 1);
+      out.Write("[maxvertexcount(%d)]\n[instance(%d)]\n", vertex_out, layers);
       out.Write("void main(%s VS_OUTPUT o[%d], inout %sStream<VertexData> output, in uint "
                 "InstanceID : SV_GSInstanceID)\n{\n",
-                primitives_d3d[primitive_type], vertex_in,
-                uid_data->wireframe ? "Line" : "Triangle");
+                primitives_d3d[primitive_type_index], vertex_in,
+                wireframe ? "Line" : "Triangle");
     }
     else
     {
-      out.Write("[maxvertexcount(%d)]\n", uid_data->stereo ? vertex_out * 2 : vertex_out);
+      out.Write("[maxvertexcount(%d)]\n", vertex_out * layers);
       out.Write("void main(%s VS_OUTPUT o[%d], inout %sStream<VertexData> output)\n{\n",
-                primitives_d3d[primitive_type], vertex_in,
-                uid_data->wireframe ? "Line" : "Triangle");
+                primitives_d3d[primitive_type_index], vertex_in,
+                wireframe ? "Line" : "Triangle");
     }
 
     out.Write("\tVertexData ps;\n");
   }
 
-  if (primitive_type == PRIMITIVE_LINES)
+  if (primitive_type == PrimitiveType::Lines)
   {
     if (ApiType == APIType::OpenGL)
     {
@@ -526,7 +558,7 @@ static T GenerateAvatarGeometryShader(u32 primitive_type, APIType ApiType)
               "\t\toffset = float2(0, -" I_LINEPTPARAMS ".z / " I_LINEPTPARAMS ".y);\n"
               "\t}\n");
   }
-  else if (primitive_type == PRIMITIVE_POINTS)
+  else if (primitive_type == PrimitiveType::Points)
   {
     if (ApiType == APIType::OpenGL)
     {
@@ -548,17 +580,17 @@ static T GenerateAvatarGeometryShader(u32 primitive_type, APIType ApiType)
               ".x, -" I_LINEPTPARAMS ".w / " I_LINEPTPARAMS ".y) * center.pos.w;\n");
   }
 
-  if (uid_data->stereo)
+  if (stereo || host_config.more_layers)
   {
     // If the GPU supports invocation we don't need a for loop and can simply use the
     // invocation identifier to determine which layer we're rendering.
-    if (g_ActiveConfig.backend_info.bSupportsGSInstancing)
+    if (host_config.backend_gs_instancing)
       out.Write("\tint eye = InstanceID;\n");
     else
       out.Write("\tfor (int eye = 0; eye < 2; ++eye) {\n");
   }
 
-  if (uid_data->wireframe)
+  if (wireframe)
     out.Write("\tVS_OUTPUT first;\n");
 
   out.Write("\tfor (int i = 0; i < %d; ++i) {\n", vertex_in);
@@ -577,7 +609,7 @@ static T GenerateAvatarGeometryShader(u32 primitive_type, APIType ApiType)
     out.Write("\tVS_OUTPUT f = o[i];\n");
   }
 
-  if (uid_data->vr)
+  if (host_config.vr)
   {
     // Select the output layer
     out.Write("\tps.layer = eye;\n");
@@ -589,7 +621,7 @@ static T GenerateAvatarGeometryShader(u32 primitive_type, APIType ApiType)
     // f.clipPos.w;\n");
     out.Write("\tf.pos.x += " I_STEREOPARAMS "[eye] - " I_STEREOPARAMS "[eye+2] * f.pos.w;\n");
   }
-  else if (uid_data->stereo)
+  else if (stereo || host_config.more_layers)
   {
     // Select the output layer
     out.Write("\tps.layer = eye;\n");
@@ -608,7 +640,7 @@ static T GenerateAvatarGeometryShader(u32 primitive_type, APIType ApiType)
     out.Write("\tf.pos.x += " I_STEREOPARAMS "[eye] * (f.pos.w - " I_STEREOPARAMS "[2]);\n");
   }
 
-  if (primitive_type == PRIMITIVE_LINES)
+  if (primitive_type == PrimitiveType::Lines)
   {
     out.Write("\tVS_OUTPUT l = f;\n"
               "\tVS_OUTPUT r = f;\n");
@@ -626,10 +658,10 @@ static T GenerateAvatarGeometryShader(u32 primitive_type, APIType ApiType)
     }
     out.Write("\t}\n");
 
-    EmitVertex(out, uid_data, "l", ApiType, true);
-    EmitVertex(out, uid_data, "r", ApiType);
+    EmitVertex(out, host_config, uid_data, "l", ApiType, wireframe, pixel_lighting, true);
+    EmitVertex(out, host_config, uid_data, "r", ApiType, wireframe, pixel_lighting);
   }
-  else if (primitive_type == PRIMITIVE_POINTS)
+  else if (primitive_type == PrimitiveType::Points)
   {
     out.Write("\tVS_OUTPUT ll = f;\n"
               "\tVS_OUTPUT lr = f;\n"
@@ -655,28 +687,28 @@ static T GenerateAvatarGeometryShader(u32 primitive_type, APIType ApiType)
     }
     out.Write("\t}\n");
 
-    EmitVertex(out, uid_data, "ll", ApiType, true);
-    EmitVertex(out, uid_data, "lr", ApiType);
-    EmitVertex(out, uid_data, "ul", ApiType);
-    EmitVertex(out, uid_data, "ur", ApiType);
+    EmitVertex(out, host_config, uid_data, "ll", ApiType, wireframe, pixel_lighting, true);
+    EmitVertex(out, host_config, uid_data, "lr", ApiType, wireframe, pixel_lighting);
+    EmitVertex(out, host_config, uid_data, "ul", ApiType, wireframe, pixel_lighting);
+    EmitVertex(out, host_config, uid_data, "ur", ApiType, wireframe, pixel_lighting);
   }
   else
   {
-    EmitVertex(out, uid_data, "f", ApiType, true);
+    EmitVertex(out, host_config, uid_data, "f", ApiType, wireframe, pixel_lighting, true);
   }
 
   out.Write("\t}\n");
 
-  EndPrimitive(out, uid_data, ApiType);
+  EndPrimitive(out, host_config, uid_data, ApiType, wireframe, pixel_lighting);
 
-  if (uid_data->stereo && !g_ActiveConfig.backend_info.bSupportsGSInstancing)
+  if ((stereo || host_config.more_layers) && !host_config.backend_gs_instancing)
     out.Write("\t}\n");
 
   out.Write("}\n");
   return out;
 }
 
-ShaderCode GenerateAvatarGeometryShaderCode(u32 primitive_type, APIType ApiType)
+ShaderCode GenerateAvatarGeometryShaderCode(PrimitiveType primitive_type, APIType ApiType, const ShaderHostConfig& host_config)
 {
-  return GenerateAvatarGeometryShader<ShaderCode>(primitive_type, ApiType);
+  return GenerateAvatarGeometryShader<ShaderCode>(primitive_type, ApiType, host_config);
 }

@@ -9,9 +9,18 @@
 #include "Common/MsgHandler.h"
 #include "Core/ConfigManager.h"
 #include "Core/HW/Wiimote.h"
-#include "InputCommon/ControllerEmu.h"
+#include "InputCommon/ControllerEmu/ControlGroup/ControlGroup.h"
+#include "InputCommon/ControllerEmu/ControllerEmu.h"
 #include "InputCommon/ControllerInterface/ControllerInterface.h"
 #include "InputCommon/InputConfig.h"
+
+InputConfig::InputConfig(const std::string& ini_name, const std::string& gui_name,
+                         const std::string& profile_name)
+    : m_ini_name(ini_name), m_gui_name(gui_name), m_profile_name(profile_name)
+{
+}
+
+InputConfig::~InputConfig() = default;
 
 bool InputConfig::LoadConfig(bool isGC)
 {
@@ -109,7 +118,7 @@ void InputConfig::SaveConfig()
   inifile.Save(ini_filename);
 }
 
-ControllerEmu* InputConfig::GetController(int index)
+ControllerEmu::EmulatedController* InputConfig::GetController(int index)
 {
   return m_controllers.at(index).get();
 }
@@ -129,11 +138,10 @@ bool InputConfig::IsControllerControlledByGamepadDevice(int index) const
   if (static_cast<size_t>(index) >= m_controllers.size())
     return false;
 
-  const auto& controller = m_controllers.at(index).get()->default_device;
+  const auto& controller = m_controllers.at(index).get()->GetDefaultDevice();
 
   // Filter out anything which obviously not a gamepad
-  return !((controller.source == "Keyboard")    // OSX IOKit Keyboard/Mouse
-           || (controller.source == "Quartz")   // OSX Quartz Keyboard/Mouse
+  return !((controller.source == "Quartz")      // OSX Quartz Keyboard/Mouse
            || (controller.source == "XInput2")  // Linux and BSD Keyboard/Mouse
            || (controller.source == "Android" &&
                controller.name == "Touchscreen")  // Android Touchscreen

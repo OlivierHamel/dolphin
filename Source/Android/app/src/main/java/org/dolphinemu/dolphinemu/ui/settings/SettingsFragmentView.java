@@ -1,6 +1,6 @@
 package org.dolphinemu.dolphinemu.ui.settings;
 
-import android.app.Activity;
+import android.support.v4.app.FragmentActivity;
 
 import org.dolphinemu.dolphinemu.model.settings.Setting;
 import org.dolphinemu.dolphinemu.model.settings.SettingSection;
@@ -48,7 +48,7 @@ public interface SettingsFragmentView
 	/**
 	 * @return The Fragment's containing activity.
 	 */
-	Activity getActivity();
+	FragmentActivity getActivity();
 
 	/**
 	 * Tell the Fragment to tell the containing Activity to show a new
@@ -93,4 +93,12 @@ public interface SettingsFragmentView
 	 * @param value   New setting for the Wiimote.
 	 */
 	void onWiimoteSettingChanged(String section, int value);
+
+	/**
+	 * Have the fragment tell the containing Activity that an extension setting was modified.
+	 *
+	 * @param key   Identifier for the extension that was modified.
+	 * @param value New setting for the extension.
+	 */
+	void onExtensionSettingChanged(String key, int value);
 }

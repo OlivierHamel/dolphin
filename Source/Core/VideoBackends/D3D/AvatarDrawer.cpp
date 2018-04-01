@@ -4,6 +4,7 @@
 
 #include "VideoBackends/D3D/AvatarDrawer.h"
 #include "Common/FileUtil.h"
+#include "Common/Logging/Log.h"
 #include "Common/MathUtil.h"
 #include "Common/MsgHandler.h"
 #include "SOIL/SOIL.h"
@@ -233,7 +234,7 @@ void AvatarDrawer::Init()
       Sleep(2);
     }
 
-    int width, width2, height, height2, channels, channels2;
+    int width = 0, width2 = 0, height = 0, height2 = 0, channels, channels2;
     u8 *left_img = nullptr, *right_img = nullptr;
     std::string s = "";
     if (VR_GetHydraStyle(0) != CS_GC_LEFT && !g_ActiveConfig.sLeftTexture.empty())
@@ -255,8 +256,12 @@ void AvatarDrawer::Init()
 
     if (error != vr::VRRenderModelError_None)
     {
+#ifdef OPENVR_0921_OR_ABOVE
       NOTICE_LOG(VR, "Unable to load render model %s - %s\n", path,
                  vr::VRRenderModels()->GetRenderModelErrorNameFromEnum(error));
+#else
+      NOTICE_LOG(VR, "Unable to load render model %s - %d\n", path, error);
+#endif
       m_vertex_count = 0;
       m_index_count = 0;
       m_scale = 1;
@@ -475,7 +480,7 @@ void AvatarDrawer::Init()
 
   // Create triangle geometry shader
   ShaderCode code;
-  code = GenerateAvatarGeometryShaderCode(PRIMITIVE_TRIANGLES, APIType::D3D);
+  code = GenerateAvatarGeometryShaderCode(PrimitiveType::TriangleStrip, APIType::D3D, ShaderHostConfig::GetCurrent()); // TODO: check
   if (!D3D::CompileGeometryShader(code.GetBuffer(), &bytecode))
   {
     ERROR_LOG(VR, "AvatarDrawer geometry shader failed to compile");
@@ -487,7 +492,7 @@ void AvatarDrawer::Init()
   D3D::SetDebugObjectName(m_geometry_shader, "AvatarDrawer geometry shader");
   bytecode->Release();
   // Create line geometry shader
-  code = GenerateAvatarGeometryShaderCode(PRIMITIVE_LINES, APIType::D3D);
+  code = GenerateAvatarGeometryShaderCode(PrimitiveType::Lines, APIType::D3D, ShaderHostConfig::GetCurrent());
   if (!D3D::CompileGeometryShader(code.GetBuffer(), &bytecode))
   {
     ERROR_LOG(VR, "AvatarDrawer geometry shader failed to compile");
@@ -829,8 +834,8 @@ void AvatarDrawer::Draw()
   D3D::stateman->PushDepthState(m_avatar_depth_state);
   D3D::stateman->PushRasterizerState(m_avatar_rast_state);
 
-  D3D11_VIEWPORT vp = CD3D11_VIEWPORT(0.f, 0.f, (float)Renderer::GetTargetWidth(),
-                                      (float)Renderer::GetTargetHeight());
+  D3D11_VIEWPORT vp = CD3D11_VIEWPORT(0.f, 0.f, (float)g_renderer->GetTargetWidth(),
+                                      (float)g_renderer->GetTargetHeight());
   D3D::context->RSSetViewports(1, &vp);
 
   D3D::stateman->SetInputLayout(m_vertex_layout);
@@ -919,6 +924,10 @@ void AvatarDrawer::Draw()
   {
     cs = VR_GetHydraStyle(1);
     DrawHydra(1, wmpos, wmrot, cs);
+  }
+  else
+  {
+    cs = CS_HYDRA_RIGHT;
   }
 
   // Draw Lines

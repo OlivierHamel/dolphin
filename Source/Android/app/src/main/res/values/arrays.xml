@@ -4,19 +4,47 @@
 <resources>
 
     <!-- New UI CPU Core selection - Default -->
-    <string-array name="emuCoresEntries" translatable="false">
+    <string-array name="emuCoresEntriesX86_64" translatable="false">
+        <item>Interpreter</item>
+        <item>Cached Interpreter</item>
+        <item>JIT Recompiler</item>
+    </string-array>
+    <integer-array name="emuCoresValuesX86_64" translatable="false">
+        <item>0</item>
+        <item>5</item>
+        <item>1</item>
+    </integer-array>
+    <string-array name="emuCoresEntriesARM64" translatable="false">
         <item>Interpreter</item>
         <item>Cached Interpreter</item>
         <item>JIT ARM64 Recompiler</item>
-        <!--<item>JIT64 Recompiler</item>
-        <item>JITIL Recompiler</item>-->
     </string-array>
-    <integer-array name="emuCoresValues" translatable="false">
+    <integer-array name="emuCoresValuesARM64" translatable="false">
         <item>0</item>
         <item>5</item>
         <item>4</item>
-        <!--<item>1</item>
-        <item>2</item>-->
+    </integer-array>
+    <string-array name="emuCoresEntriesGeneric" translatable="false">
+        <item>Interpreter</item>
+        <item>Cached Interpreter</item>
+    </string-array>
+    <integer-array name="emuCoresValuesGeneric" translatable="false">
+        <item>0</item>
+        <item>5</item>
+    </integer-array>
+
+    <!-- Slot A Device Selection -->
+    <string-array name="slotDeviceEntries" translatable="false">
+        <item>Nothing</item>
+        <item>Dummy</item>
+        <item>Memory Card</item>
+        <item>GCI Folder</item>
+    </string-array>
+    <integer-array name="slotDeviceValues" translatable="false">
+        <item>255</item>
+        <item>0</item>
+        <item>1</item>
+        <item>8</item>
     </integer-array>
 
     <!-- Video backend selection -->
@@ -34,7 +62,7 @@
     </integer-array>
 
     <!-- Wii Remote extensions -->
-    <string-array name="wiimoteExtensions" translatable="false">
+    <string-array name="wiimoteExtensionsEntries" translatable="false">
         <item>None</item>
         <item>Nunchuk</item>
         <item>Classic</item>
@@ -42,6 +70,14 @@
         <item>Drums</item>
         <item>Turntable</item>
     </string-array>
+    <integer-array name="wiimoteExtensionsValues" translatable="false">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+        <item>3</item>
+        <item>4</item>
+        <item>5</item>
+    </integer-array>
 
     <!-- Texture Cache Accuracy Preference -->
     <string-array name="textureCacheAccuracyEntries" translatable="false">
@@ -67,6 +103,18 @@
         <item>2</item>
     </integer-array>
 
+    <!-- Ubershader Mode Preference -->
+    <string-array name="uberShaderModeEntries" translatable="false">
+        <item>Disabled</item>
+        <item>Hybrid</item>
+        <item>Exclusive</item>
+    </string-array>
+    <integer-array name="uberShaderModeValues" translatable="false">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+    </integer-array>
+
     <!-- Internal Resolution Preference -->
     <string-array name="internalResolutionEntries" translatable="false">
         <item>1x Native (640x528)</item>
@@ -79,14 +127,12 @@
         <item>6x Native (3840x3168) for 4K</item>
     </string-array>
     <integer-array name="internalResolutionValues" translatable="false">
+        <item>1</item>
         <item>2</item>
         <item>3</item>
         <item>4</item>
         <item>5</item>
         <item>6</item>
-        <item>7</item>
-        <item>8</item>
-        <item>9</item>
     </integer-array>
 
     <!-- FSAA Preference -->

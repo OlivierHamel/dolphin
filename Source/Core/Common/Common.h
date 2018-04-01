@@ -4,19 +4,6 @@
 
 #pragma once
 
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <string>
-
-// Git version number
-extern const std::string scm_desc_str;
-extern const std::string scm_branch_str;
-extern const std::string scm_rev_str;
-extern const std::string scm_rev_git_str;
-extern const std::string netplay_dolphin_ver;
-extern const std::string scm_distributor_str;
-
 // Force enable logging in the right modes. For some reason, something had changed
 // so that debugfast no longer logged.
 #if defined(_DEBUG) || defined(DEBUGFAST)
@@ -44,12 +31,6 @@ extern const std::string scm_distributor_str;
 #define GC_ALIGNED128(x) __declspec(align(128)) x
 #define GC_ALIGNED16_DECL(x) __declspec(align(16)) x
 #define GC_ALIGNED64_DECL(x) __declspec(align(64)) x
-
-// Since they are always around on Windows
-#define HAVE_WX 1
-#define HAVE_OPENAL 1
-
-#define HAVE_PORTAUDIO 1
 
 // Debug definitions
 #if defined(_DEBUG)
@@ -106,12 +87,4 @@ enum HOST_COMM
   WM_USER_CREATE,
   WM_USER_SETCURSOR,
   WM_USER_JOB_DISPATCH,
-};
-
-// Used for notification on emulation state
-enum EMUSTATE_CHANGE
-{
-  EMUSTATE_CHANGE_PLAY = 1,
-  EMUSTATE_CHANGE_PAUSE,
-  EMUSTATE_CHANGE_STOP
 };

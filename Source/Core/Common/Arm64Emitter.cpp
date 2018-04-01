@@ -4,13 +4,14 @@
 
 #include <algorithm>
 #include <array>
+#include <cinttypes>
 #include <cstring>
 #include <vector>
 
+#include "Common/Align.h"
 #include "Common/Arm64Emitter.h"
 #include "Common/Assert.h"
 #include "Common/CommonTypes.h"
-#include "Common/MathUtil.h"
 
 namespace Arm64Gen
 {
@@ -480,13 +481,13 @@ void ARM64XEmitter::EncodeCompareBranchInst(u32 op, ARM64Reg Rt, const void* ptr
   bool b64Bit = Is64Bit(Rt);
   s64 distance = (s64)ptr - (s64)m_code;
 
-  _assert_msg_(DYNA_REC, !(distance & 0x3), "%s: distance must be a multiple of 4: %lx",
+  _assert_msg_(DYNA_REC, !(distance & 0x3), "%s: distance must be a multiple of 4: %" PRIx64,
                __FUNCTION__, distance);
 
   distance >>= 2;
 
   _assert_msg_(DYNA_REC, distance >= -0x40000 && distance <= 0x3FFFF,
-               "%s: Received too large distance: %lx", __FUNCTION__, distance);
+               "%s: Received too large distance: %" PRIx64, __FUNCTION__, distance);
 
   Rt = DecodeReg(Rt);
   Write32((b64Bit << 31) | (0x34 << 24) | (op << 24) | (((u32)distance << 5) & 0xFFFFE0) | Rt);
@@ -497,13 +498,13 @@ void ARM64XEmitter::EncodeTestBranchInst(u32 op, ARM64Reg Rt, u8 bits, const voi
   bool b64Bit = Is64Bit(Rt);
   s64 distance = (s64)ptr - (s64)m_code;
 
-  _assert_msg_(DYNA_REC, !(distance & 0x3), "%s: distance must be a multiple of 4: %lx",
+  _assert_msg_(DYNA_REC, !(distance & 0x3), "%s: distance must be a multiple of 4: %" PRIx64,
                __FUNCTION__, distance);
 
   distance >>= 2;
 
   _assert_msg_(DYNA_REC, distance >= -0x3FFF && distance < 0x3FFF,
-               "%s: Received too large distance: %lx", __FUNCTION__, distance);
+               "%s: Received too large distance: %" PRIx64, __FUNCTION__, distance);
 
   Rt = DecodeReg(Rt);
   Write32((b64Bit << 31) | (0x36 << 24) | (op << 24) | (bits << 19) |
@@ -514,13 +515,13 @@ void ARM64XEmitter::EncodeUnconditionalBranchInst(u32 op, const void* ptr)
 {
   s64 distance = (s64)ptr - s64(m_code);
 
-  _assert_msg_(DYNA_REC, !(distance & 0x3), "%s: distance must be a multiple of 4: %lx",
+  _assert_msg_(DYNA_REC, !(distance & 0x3), "%s: distance must be a multiple of 4: %" PRIx64,
                __FUNCTION__, distance);
 
   distance >>= 2;
 
   _assert_msg_(DYNA_REC, distance >= -0x2000000LL && distance <= 0x1FFFFFFLL,
-               "%s: Received too large distance: %lx", __FUNCTION__, distance);
+               "%s: Received too large distance: %" PRIx64, __FUNCTION__, distance);
 
   Write32((op << 31) | (0x5 << 26) | (distance & 0x3FFFFFF));
 }
@@ -902,37 +903,42 @@ void ARM64XEmitter::SetJumpTarget(FixupBranch const& branch)
     Not = true;
   case 0:  // CBZ
   {
-    _assert_msg_(DYNA_REC, IsInRangeImm19(distance), "%s(%d): Received too large distance: %lx",
-                 __FUNCTION__, branch.type, distance);
+    _assert_msg_(DYNA_REC, IsInRangeImm19(distance),
+                 "%s(%d): Received too large distance: %" PRIx64, __FUNCTION__, branch.type,
+                 distance);
     bool b64Bit = Is64Bit(branch.reg);
     ARM64Reg reg = DecodeReg(branch.reg);
     inst = (b64Bit << 31) | (0x1A << 25) | (Not << 24) | (MaskImm19(distance) << 5) | reg;
   }
   break;
   case 2:  // B (conditional)
-    _assert_msg_(DYNA_REC, IsInRangeImm19(distance), "%s(%d): Received too large distance: %lx",
-                 __FUNCTION__, branch.type, distance);
+    _assert_msg_(DYNA_REC, IsInRangeImm19(distance),
+                 "%s(%d): Received too large distance: %" PRIx64, __FUNCTION__, branch.type,
+                 distance);
     inst = (0x2A << 25) | (MaskImm19(distance) << 5) | branch.cond;
     break;
   case 4:  // TBNZ
     Not = true;
   case 3:  // TBZ
   {
-    _assert_msg_(DYNA_REC, IsInRangeImm14(distance), "%s(%d): Received too large distance: %lx",
-                 __FUNCTION__, branch.type, distance);
+    _assert_msg_(DYNA_REC, IsInRangeImm14(distance),
+                 "%s(%d): Received too large distance: %" PRIx64, __FUNCTION__, branch.type,
+                 distance);
     ARM64Reg reg = DecodeReg(branch.reg);
     inst = ((branch.bit & 0x20) << 26) | (0x1B << 25) | (Not << 24) | ((branch.bit & 0x1F) << 19) |
            (MaskImm14(distance) << 5) | reg;
   }
   break;
   case 5:  // B (uncoditional)
-    _assert_msg_(DYNA_REC, IsInRangeImm26(distance), "%s(%d): Received too large distance: %lx",
-                 __FUNCTION__, branch.type, distance);
+    _assert_msg_(DYNA_REC, IsInRangeImm26(distance),
+                 "%s(%d): Received too large distance: %" PRIx64, __FUNCTION__, branch.type,
+                 distance);
     inst = (0x5 << 26) | MaskImm26(distance);
     break;
   case 6:  // BL (unconditional)
-    _assert_msg_(DYNA_REC, IsInRangeImm26(distance), "%s(%d): Received too large distance: %lx",
-                 __FUNCTION__, branch.type, distance);
+    _assert_msg_(DYNA_REC, IsInRangeImm26(distance),
+                 "%s(%d): Received too large distance: %" PRIx64, __FUNCTION__, branch.type,
+                 distance);
     inst = (0x25 << 26) | MaskImm26(distance);
     break;
   }
@@ -1021,8 +1027,8 @@ void ARM64XEmitter::B(CCFlags cond, const void* ptr)
   distance >>= 2;
 
   _assert_msg_(DYNA_REC, IsInRangeImm19(distance),
-               "%s: Received too large distance: %p->%p %ld %lx", __FUNCTION__, m_code, ptr,
-               distance, distance);
+               "%s: Received too large distance: %p->%p %" PRIi64 " %" PRIx64, __FUNCTION__, m_code,
+               ptr, distance, distance);
   Write32((0x54 << 24) | (MaskImm19(distance) << 5) | cond);
 }
 
@@ -1210,6 +1216,14 @@ void ARM64XEmitter::MRS(ARM64Reg Rt, PStateField field)
   _assert_msg_(DYNA_REC, Is64Bit(Rt), "MRS: Rt must be 64-bit");
   GetSystemReg(field, o0, op1, CRn, CRm, op2);
   EncodeSystemInst(o0 | 4, op1, CRn, CRm, op2, DecodeReg(Rt));
+}
+
+void ARM64XEmitter::CNTVCT(Arm64Gen::ARM64Reg Rt)
+{
+  _assert_msg_(DYNA_REC, Is64Bit(Rt), "CNTVCT: Rt must be 64-bit");
+
+  // MRS <Xt>, CNTVCT_EL0 ; Read CNTVCT_EL0 into Xt
+  EncodeSystemInst(3 | 4, 3, 0xe, 0, 2, DecodeReg(Rt));
 }
 
 void ARM64XEmitter::HINT(SystemHint op)
@@ -1536,19 +1550,22 @@ void ARM64XEmitter::MVN(ARM64Reg Rd, ARM64Reg Rm)
 }
 void ARM64XEmitter::LSL(ARM64Reg Rd, ARM64Reg Rm, int shift)
 {
-  ORR(Rd, Is64Bit(Rd) ? ZR : WZR, Rm, ArithOption(Rm, ST_LSL, shift));
+  int bits = Is64Bit(Rd) ? 64 : 32;
+  UBFM(Rd, Rm, (bits - shift) & (bits - 1), bits - shift - 1);
 }
 void ARM64XEmitter::LSR(ARM64Reg Rd, ARM64Reg Rm, int shift)
 {
-  ORR(Rd, Is64Bit(Rd) ? ZR : WZR, Rm, ArithOption(Rm, ST_LSR, shift));
+  int bits = Is64Bit(Rd) ? 64 : 32;
+  UBFM(Rd, Rm, shift, bits - 1);
 }
 void ARM64XEmitter::ASR(ARM64Reg Rd, ARM64Reg Rm, int shift)
 {
-  ORR(Rd, Is64Bit(Rd) ? ZR : WZR, Rm, ArithOption(Rm, ST_ASR, shift));
+  int bits = Is64Bit(Rd) ? 64 : 32;
+  SBFM(Rd, Rm, shift, bits - 1);
 }
 void ARM64XEmitter::ROR(ARM64Reg Rd, ARM64Reg Rm, int shift)
 {
-  ORR(Rd, Is64Bit(Rd) ? ZR : WZR, Rm, ArithOption(Rm, ST_ROR, shift));
+  EXTR(Rd, Rm, Rm, shift);
 }
 
 // Logical (immediate)
@@ -2080,105 +2097,57 @@ bool ARM64XEmitter::MOVI2R2(ARM64Reg Rd, u64 imm1, u64 imm2)
 void ARM64XEmitter::ABI_PushRegisters(BitSet32 registers)
 {
   int num_regs = registers.Count();
+  int stack_size = (num_regs + (num_regs & 1)) * 8;
+  auto it = registers.begin();
 
-  if (num_regs % 2)
-  {
-    bool first = true;
+  if (!num_regs)
+    return;
 
-    // Stack is required to be quad-word aligned.
-    u32 stack_size = ROUND_UP(num_regs * 8, 16);
-    u32 current_offset = 0;
-    std::vector<ARM64Reg> reg_pair;
+  // 8 byte per register, but 16 byte alignment, so we may have to padd one register.
+  // Only update the SP on the last write to avoid the dependency between those stores.
 
-    for (auto it : registers)
-    {
-      if (first)
-      {
-        STR(INDEX_PRE, (ARM64Reg)(X0 + it), SP, -(s32)stack_size);
-        first = false;
-        current_offset += 16;
-      }
-      else
-      {
-        reg_pair.push_back((ARM64Reg)(X0 + it));
-        if (reg_pair.size() == 2)
-        {
-          STP(INDEX_SIGNED, reg_pair[0], reg_pair[1], SP, current_offset);
-          reg_pair.clear();
-          current_offset += 16;
-        }
-      }
-    }
-  }
+  // The first push must adjust the SP, else a context switch may invalidate everything below SP.
+  if (num_regs & 1)
+    STR(INDEX_PRE, (ARM64Reg)(X0 + *it++), SP, -stack_size);
   else
-  {
-    std::vector<ARM64Reg> reg_pair;
+    STP(INDEX_PRE, (ARM64Reg)(X0 + *it++), (ARM64Reg)(X0 + *it++), SP, -stack_size);
 
-    for (auto it : registers)
-    {
-      reg_pair.push_back((ARM64Reg)(X0 + it));
-      if (reg_pair.size() == 2)
-      {
-        STP(INDEX_PRE, reg_pair[0], reg_pair[1], SP, -16);
-        reg_pair.clear();
-      }
-    }
-  }
+  // Fast store for all other registers, this is always an even number.
+  for (int i = 0; i < (num_regs - 1) / 2; i++)
+    STP(INDEX_SIGNED, (ARM64Reg)(X0 + *it++), (ARM64Reg)(X0 + *it++), SP, 16 * (i + 1));
+
+  _assert_msg_(DYNA_REC, it == registers.end(), "%s registers don't match.", __FUNCTION__);
 }
 
 void ARM64XEmitter::ABI_PopRegisters(BitSet32 registers, BitSet32 ignore_mask)
 {
   int num_regs = registers.Count();
+  int stack_size = (num_regs + (num_regs & 1)) * 8;
+  auto it = registers.begin();
 
-  if (num_regs % 2)
-  {
-    bool first = true;
+  if (!num_regs)
+    return;
 
-    std::vector<ARM64Reg> reg_pair;
+  // We must adjust the SP in the end, so load the first (two) registers at least.
+  ARM64Reg first = (ARM64Reg)(X0 + *it++);
+  ARM64Reg second;
+  if (!(num_regs & 1))
+    second = (ARM64Reg)(X0 + *it++);
 
-    for (auto it : registers)
-    {
-      if (ignore_mask[it])
-        it = WSP;
+  // 8 byte per register, but 16 byte alignment, so we may have to padd one register.
+  // Only update the SP on the last load to avoid the dependency between those loads.
 
-      if (first)
-      {
-        LDR(INDEX_POST, (ARM64Reg)(X0 + it), SP, 16);
-        first = false;
-      }
-      else
-      {
-        reg_pair.push_back((ARM64Reg)(X0 + it));
-        if (reg_pair.size() == 2)
-        {
-          LDP(INDEX_POST, reg_pair[0], reg_pair[1], SP, 16);
-          reg_pair.clear();
-        }
-      }
-    }
-  }
+  // Fast load for all but the first (two) registers, this is always an even number.
+  for (int i = 0; i < (num_regs - 1) / 2; i++)
+    LDP(INDEX_SIGNED, (ARM64Reg)(X0 + *it++), (ARM64Reg)(X0 + *it++), SP, 16 * (i + 1));
+
+  // Post loading the first (two) registers.
+  if (num_regs & 1)
+    LDR(INDEX_POST, first, SP, stack_size);
   else
-  {
-    std::vector<ARM64Reg> reg_pair;
+    LDP(INDEX_POST, first, second, SP, stack_size);
 
-    for (int i = 31; i >= 0; --i)
-    {
-      if (!registers[i])
-        continue;
-
-      int reg = i;
-
-      if (ignore_mask[reg])
-        reg = WSP;
-
-      reg_pair.push_back((ARM64Reg)(X0 + reg));
-      if (reg_pair.size() == 2)
-      {
-        LDP(INDEX_POST, reg_pair[1], reg_pair[0], SP, 16);
-        reg_pair.clear();
-      }
-    }
-  }
+  _assert_msg_(DYNA_REC, it == registers.end(), "%s registers don't match.", __FUNCTION__);
 }
 
 // Float Emitter
@@ -2665,7 +2634,8 @@ void ARM64FloatEmitter::EncodeLoadStoreRegisterOffset(u32 size, bool load, ARM64
 
 void ARM64FloatEmitter::EncodeModImm(bool Q, u8 op, u8 cmode, u8 o2, ARM64Reg Rd, u8 abcdefgh)
 {
-  union {
+  union
+  {
     u8 hex;
     struct
     {
@@ -3276,6 +3246,10 @@ void ARM64FloatEmitter::FMUL(u8 size, ARM64Reg Rd, ARM64Reg Rn, ARM64Reg Rm)
 void ARM64FloatEmitter::FNEG(u8 size, ARM64Reg Rd, ARM64Reg Rn)
 {
   Emit2RegMisc(IsQuad(Rd), 1, 2 | (size >> 6), 0xF, Rd, Rn);
+}
+void ARM64FloatEmitter::FRECPE(u8 size, ARM64Reg Rd, ARM64Reg Rn)
+{
+  Emit2RegMisc(IsQuad(Rd), 0, 2 | (size >> 6), 0x1D, Rd, Rn);
 }
 void ARM64FloatEmitter::FRSQRTE(u8 size, ARM64Reg Rd, ARM64Reg Rn)
 {
@@ -4091,7 +4065,7 @@ void ARM64XEmitter::ANDI2R(ARM64Reg Rd, ARM64Reg Rn, u64 imm, ARM64Reg scratch)
   else
   {
     _assert_msg_(DYNA_REC, scratch != INVALID_REG,
-                 "ANDSI2R - failed to construct logical immediate value from %08x, need scratch",
+                 "ANDI2R - failed to construct logical immediate value from %08x, need scratch",
                  (u32)imm);
     MOVI2R(scratch, imm);
     AND(Rd, Rn, scratch);
@@ -4149,27 +4123,29 @@ void ARM64XEmitter::ANDSI2R(ARM64Reg Rd, ARM64Reg Rn, u64 imm, ARM64Reg scratch)
   }
 }
 
+void ARM64XEmitter::AddImmediate(ARM64Reg Rd, ARM64Reg Rn, u64 imm, bool shift, bool negative,
+                                 bool flags)
+{
+  switch ((negative << 1) | flags)
+  {
+  case 0:
+    ADD(Rd, Rn, imm, shift);
+    break;
+  case 1:
+    ADDS(Rd, Rn, imm, shift);
+    break;
+  case 2:
+    SUB(Rd, Rn, imm, shift);
+    break;
+  case 3:
+    SUBS(Rd, Rn, imm, shift);
+    break;
+  }
+}
+
 void ARM64XEmitter::ADDI2R_internal(ARM64Reg Rd, ARM64Reg Rn, u64 imm, bool negative, bool flags,
                                     ARM64Reg scratch)
 {
-  auto addi = [this](ARM64Reg Rd, ARM64Reg Rn, u64 imm, bool shift, bool negative, bool flags) {
-    switch ((negative << 1) | flags)
-    {
-    case 0:
-      ADD(Rd, Rn, imm, shift);
-      break;
-    case 1:
-      ADDS(Rd, Rn, imm, shift);
-      break;
-    case 2:
-      SUB(Rd, Rn, imm, shift);
-      break;
-    case 3:
-      SUBS(Rd, Rn, imm, shift);
-      break;
-    }
-  };
-
   bool has_scratch = scratch != INVALID_REG;
   u64 imm_neg = Is64Bit(Rd) ? -imm : -imm & 0xFFFFFFFFuLL;
   bool neg_neg = negative ? false : true;
@@ -4178,22 +4154,22 @@ void ARM64XEmitter::ADDI2R_internal(ARM64Reg Rd, ARM64Reg Rn, u64 imm, bool nega
   // Try them all first
   if (imm <= 0xFFF)
   {
-    addi(Rd, Rn, imm, false, negative, flags);
+    AddImmediate(Rd, Rn, imm, false, negative, flags);
     return;
   }
   if (imm <= 0xFFFFFF && (imm & 0xFFF) == 0)
   {
-    addi(Rd, Rn, imm >> 12, true, negative, flags);
+    AddImmediate(Rd, Rn, imm >> 12, true, negative, flags);
     return;
   }
   if (imm_neg <= 0xFFF)
   {
-    addi(Rd, Rn, imm_neg, false, neg_neg, flags);
+    AddImmediate(Rd, Rn, imm_neg, false, neg_neg, flags);
     return;
   }
   if (imm_neg <= 0xFFFFFF && (imm_neg & 0xFFF) == 0)
   {
-    addi(Rd, Rn, imm_neg >> 12, true, neg_neg, flags);
+    AddImmediate(Rd, Rn, imm_neg >> 12, true, neg_neg, flags);
     return;
   }
 
@@ -4202,14 +4178,14 @@ void ARM64XEmitter::ADDI2R_internal(ARM64Reg Rd, ARM64Reg Rn, u64 imm, bool nega
   // As this splits the addition in two parts, this must not be done on setting flags.
   if (!flags && (imm >= 0x10000u || !has_scratch) && imm < 0x1000000u)
   {
-    addi(Rd, Rn, imm & 0xFFF, false, negative, false);
-    addi(Rd, Rd, imm >> 12, true, negative, false);
+    AddImmediate(Rd, Rn, imm & 0xFFF, false, negative, false);
+    AddImmediate(Rd, Rd, imm >> 12, true, negative, false);
     return;
   }
   if (!flags && (imm_neg >= 0x10000u || !has_scratch) && imm_neg < 0x1000000u)
   {
-    addi(Rd, Rn, imm_neg & 0xFFF, false, neg_neg, false);
-    addi(Rd, Rd, imm_neg >> 12, true, neg_neg, false);
+    AddImmediate(Rd, Rn, imm_neg & 0xFFF, false, neg_neg, false);
+    AddImmediate(Rd, Rd, imm_neg >> 12, true, neg_neg, false);
     return;
   }
 

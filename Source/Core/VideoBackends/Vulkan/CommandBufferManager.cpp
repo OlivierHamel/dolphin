@@ -91,7 +91,8 @@ bool CommandBufferManager::CreateCommandBuffers()
     VkDescriptorPoolSize pool_sizes[] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 500000},
                                          {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 500000},
                                          {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 16},
-                                         {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1024}};
+                                         {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 16384},
+                                         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 16384}};
 
     VkDescriptorPoolCreateInfo pool_create_info = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
                                                    nullptr,
@@ -351,9 +352,14 @@ void CommandBufferManager::SubmitCommandBuffer(size_t index, VkSemaphore wait_se
                                      &present_image_index,
                                      nullptr};
 
-    res = vkQueuePresentKHR(g_vulkan_context->GetGraphicsQueue(), &present_info);
-    if (res != VK_SUCCESS && res != VK_ERROR_OUT_OF_DATE_KHR && res != VK_SUBOPTIMAL_KHR)
-      LOG_VULKAN_ERROR(res, "vkQueuePresentKHR failed: ");
+    res = vkQueuePresentKHR(g_vulkan_context->GetPresentQueue(), &present_info);
+    if (res != VK_SUCCESS)
+    {
+      // VK_ERROR_OUT_OF_DATE_KHR is not fatal, just means we need to recreate our swap chain.
+      if (res != VK_ERROR_OUT_OF_DATE_KHR && res != VK_SUBOPTIMAL_KHR)
+        LOG_VULKAN_ERROR(res, "vkQueuePresentKHR failed: ");
+      m_present_failed_flag.Set();
+    }
   }
 
   // Command buffer has been queued, so permit the next one.

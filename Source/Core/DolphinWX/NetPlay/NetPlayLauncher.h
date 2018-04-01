@@ -6,31 +6,20 @@
 
 #include <string>
 #include "Common/CommonTypes.h"
-#include "Common/IniFile.h"
 
-class CGameListCtrl;
+class GameListCtrl;
 class wxRect;
 class wxWindow;
 
 class NetPlayLaunchConfig
 {
 public:
-  static std::string GetTraversalHostFromIniConfig(const IniFile::Section& netplay_section);
-  static u16 GetTraversalPortFromIniConfig(const IniFile::Section& netplay_section);
-  void SetDialogInfo(const IniFile::Section& section, wxWindow* parent);
+  void SetDialogInfo(wxWindow* parent);
 
-  static const std::string DEFAULT_TRAVERSAL_HOST;
-#if defined(_MSC_VER) && _MSC_VER <= 1800
-#define CONSTEXPR(datatype, name, value)                                                           \
-  enum name##_enum : datatype { name = value }
-#else
-#define CONSTEXPR(datatype, name, value) constexpr datatype name = value
-#endif
-  static CONSTEXPR(u16, DEFAULT_TRAVERSAL_PORT, 6262);
   const wxRect window_defaults{wxDefaultCoord, wxDefaultCoord, 768, 768 - 128};
 
   std::string player_name;
-  const CGameListCtrl* game_list_ctrl;
+  const GameListCtrl* game_list_ctrl;
   wxWindow* parent_window;
   bool use_traversal;
   std::string traversal_host;
@@ -41,14 +30,11 @@ public:
 class NetPlayHostConfig : public NetPlayLaunchConfig
 {
 public:
-  void FromIniConfig(IniFile::Section& netplay_section);
-
-  static CONSTEXPR(u16, DEFAULT_LISTEN_PORT, 2626);
-#undef CONSTEXPR
+  void FromConfig();
 
   std::string game_name;
   u16 listen_port = 0;
-  bool forward_port;
+  bool forward_port = false;
 };
 
 class NetPlayJoinConfig : public NetPlayLaunchConfig

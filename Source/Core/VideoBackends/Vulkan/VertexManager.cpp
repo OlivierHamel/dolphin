@@ -3,6 +3,11 @@
 // Refer to the license.txt file included.
 
 #include "VideoBackends/Vulkan/VertexManager.h"
+
+#include "Common/CommonTypes.h"
+#include "Common/Logging/Log.h"
+#include "Common/MsgHandler.h"
+
 #include "VideoBackends/Vulkan/BoundingBox.h"
 #include "VideoBackends/Vulkan/CommandBufferManager.h"
 #include "VideoBackends/Vulkan/FramebufferManager.h"
@@ -64,10 +69,10 @@ bool VertexManager::Initialize()
   return true;
 }
 
-NativeVertexFormat*
+std::unique_ptr<NativeVertexFormat>
 VertexManager::CreateNativeVertexFormat(const PortableVertexDeclaration& vtx_decl)
 {
-  return new VertexFormat(vtx_decl);
+  return std::make_unique<VertexFormat>(vtx_decl);
 }
 
 void VertexManager::PrepareDrawBuffers(u32 stride)
@@ -130,50 +135,27 @@ void VertexManager::ResetBuffer(u32 stride)
       static_cast<u32>(m_index_stream_buffer->GetCurrentOffset() / sizeof(u16));
 }
 
-void VertexManager::vFlush(bool use_dst_alpha)
+void VertexManager::vFlush()
 {
   const VertexFormat* vertex_format =
       static_cast<VertexFormat*>(VertexLoaderManager::GetCurrentVertexFormat());
   u32 vertex_stride = vertex_format->GetVertexStride();
 
-  // Commit memory to device
-  PrepareDrawBuffers(vertex_stride);
-
   // Figure out the number of indices to draw
   u32 index_count = IndexGenerator::GetIndexLen();
 
-  // Update assembly state
+  // Update tracked state
   StateTracker::GetInstance()->SetVertexFormat(vertex_format);
-  switch (m_current_primitive_type)
-  {
-  case PRIMITIVE_POINTS:
-    StateTracker::GetInstance()->SetPrimitiveTopology(VK_PRIMITIVE_TOPOLOGY_POINT_LIST);
-    StateTracker::GetInstance()->DisableBackFaceCulling();
-    break;
-
-  case PRIMITIVE_LINES:
-    StateTracker::GetInstance()->SetPrimitiveTopology(VK_PRIMITIVE_TOPOLOGY_LINE_LIST);
-    StateTracker::GetInstance()->DisableBackFaceCulling();
-    break;
-
-  case PRIMITIVE_TRIANGLES:
-    StateTracker::GetInstance()->SetPrimitiveTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP);
-    g_renderer->SetGenerationMode();
-    break;
-  }
-
-  // Can we do single-pass dst alpha?
-  DSTALPHA_MODE dstalpha_mode = DSTALPHA_NONE;
-  if (use_dst_alpha && g_vulkan_context->SupportsDualSourceBlend())
-    dstalpha_mode = DSTALPHA_DUAL_SOURCE_BLEND;
-
-  // Check for any shader stage changes
-  StateTracker::GetInstance()->CheckForShaderChanges(m_current_primitive_type, dstalpha_mode);
-
-  // Update any changed constants
+  StateTracker::GetInstance()->CheckForShaderChanges();
   StateTracker::GetInstance()->UpdateVertexShaderConstants();
   StateTracker::GetInstance()->UpdateGeometryShaderConstants();
   StateTracker::GetInstance()->UpdatePixelShaderConstants();
+
+  // Commit memory to device.
+  // NOTE: This must be done after constant upload, as a constant buffer overrun can cause
+  // the current command buffer to be executed, and we want the buffer space to be associated
+  // with the command buffer that has the corresponding draw.
+  PrepareDrawBuffers(vertex_stride);
 
   // Flush all EFB pokes and invalidate the peek cache.
   FramebufferManager::GetInstance()->InvalidatePeekCache();
@@ -204,27 +186,6 @@ void VertexManager::vFlush(bool use_dst_alpha)
   // Execute the draw
   vkCmdDrawIndexed(g_command_buffer_mgr->GetCurrentCommandBuffer(), index_count, 1,
                    m_current_draw_base_index, m_current_draw_base_vertex, 0);
-
-  // If the GPU does not support dual-source blending, we can approximate the effect by drawing
-  // the object a second time, with the write mask set to alpha only using a shader that outputs
-  // the destination/constant alpha value (which would normally be SRC_COLOR.a).
-  //
-  // This is also used when logic ops and destination alpha is enabled, since we can't enable
-  // blending and logic ops concurrently (and the logical operation applies to all channels).
-  bool logic_op_enabled = bpmem.blendmode.logicopenable && !bpmem.blendmode.blendenable;
-  if (use_dst_alpha && (!g_vulkan_context->SupportsDualSourceBlend() || logic_op_enabled))
-  {
-    StateTracker::GetInstance()->CheckForShaderChanges(m_current_primitive_type,
-                                                       DSTALPHA_ALPHA_PASS);
-    if (!StateTracker::GetInstance()->Bind())
-    {
-      WARN_LOG(VIDEO, "Skipped draw of %u indices (alpha pass)", index_count);
-      return;
-    }
-
-    vkCmdDrawIndexed(g_command_buffer_mgr->GetCurrentCommandBuffer(), index_count, 1,
-                     m_current_draw_base_index, m_current_draw_base_vertex, 0);
-  }
 
   StateTracker::GetInstance()->OnDraw();
 }
